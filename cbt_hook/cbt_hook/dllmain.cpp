@@ -2,7 +2,6 @@
 // This file was heavily inspired by:
 // https://github.com/yinkaisheng/MyLiteSpy
 // Which is distributed without any license as far as I can tell.
-#include "pch.h"
 #include <stdio.h>
 #include <windows.h>
 #include "cbt_hook.h"
