@@ -15,7 +15,7 @@
 #include <sstream>
 #include "cbt_hook.h"
 
-using nlohmann::json;
+using json = nlohmann::json;
 
 #define MYDEBUG
 #ifdef MYDEBUG
@@ -59,23 +59,11 @@ std::wstring dllPath;
 HINSTANCE hInstance = nullptr;
 std::unique_ptr<std::thread> windowThread;
 
-struct RequestData {
+typedef struct RequestDataStruct {
     std::wstring processFilter;
     json hwnds = json::array();
     json errors = json::array();
-};
-
-struct InitRequestData{
-    HWND hwnd = nullptr;
-    std::string error;
-};
-
-void to_json(json& j, const InitRequestData& data) {
-    j = json{
-        {"hwnd ", (UINT32)data.hwnd },
-        {"error", data.error},
-    };
-}
+} RequestData;
 
 BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
 {
@@ -154,27 +142,25 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     }
 }
 
-void windowThreadFunc(std::promise<InitRequestData > errorPromise) {
-    InitRequestData data;
+void windowThreadFunc(std::promise<std::string> errorPromise) {
     WNDCLASS wc{};
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = TEXT("HWNDObserverInvisibleWindowClass");
     if (!RegisterClass(&wc))
     {
-        data.error = "Call to RegisterClass failed";
-        errorPromise.set_value(data);
+        errorPromise.set_value("Call to RegisterClass failed");
         return;
     }
     HWND hwnd = CreateWindow(TEXT("HWNDObserverInvisibleWindowClass"), TEXT("HWND Observer Invisible Window"), WS_OVERLAPPEDWINDOW & ~WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, NULL, NULL, hInstance, NULL);
     if (!hwnd)
     {
-        data.error = "Call to CreateWindow failed!";
-        errorPromise.set_value(data);
-        return;        
+        errorPromise.set_value("Call to CreateWindow failed!");
+        return;
     }
-    data.hwnd = hwnd;
-    errorPromise.set_value(data);
+    std::ostringstream oss;
+    oss << "Successfully created invisible window; HWND = " << (DWORD)hwnd;
+    errorPromise.set_value(oss.str());
     MSG msg{};
     while (GetMessage(&msg, NULL, 0, 0))
     {
@@ -183,16 +169,15 @@ void windowThreadFunc(std::promise<InitRequestData > errorPromise) {
     }
 }
 
-bool createInvisibleWindow(InitRequestData &data)
+std::string createInvisibleWindow()
 {
-    std::promise<InitRequestData > errorPromise;
-    std::future<InitRequestData > errorFuture = errorPromise.get_future();
+    std::promise<std::string> errorPromise;
+    std::future<std::string> errorFuture = errorPromise.get_future();    
     windowThread.reset(new std::thread(windowThreadFunc, std::move(errorPromise)));
-    data= errorFuture.get();
-    return data.error.length() == 0;
+    std::string error = errorFuture.get();
+    return error;
 }
 
-/*
 std::string spawnCbtClient(const std::string& name)
 {
     std::wstring clientPath(dllPath);
@@ -202,7 +187,7 @@ std::string spawnCbtClient(const std::string& name)
     clientPath += L"\\";
     clientPath += L"cbt_client.exe";
 }
-*/
+
 json init(json& request)
 {
     if (request.contains("dbName")) {
@@ -211,15 +196,18 @@ json init(json& request)
         };
         return response;
     }
-    InitRequestData data;
-    if (!createInvisibleWindow(data)) {
-        json response = data;
+    std::string error = createInvisibleWindow();
+    if (error.length() > 0) {
+        json response = {
+            {"error", error},
+        };
         return response;
     }
-    json response(data);
+    json response = {
+        {"error", "OK"},
+    };
     return response;
 }
-
 json queryHwndsImpl(json &request)
 {
     mylog("queryHwndsImpl");
@@ -276,6 +264,11 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     case DLL_PROCESS_ATTACH:
         hInstance = hModule;
         {
+            std::wstring wPath;
+            wPath.resize(MAX_BUFFER_SIZE);
+            DWORD size = GetModuleFileNameEx((HMODULE)hModule, NULL, &wPath[0], MAX_BUFFER_SIZE);
+            wPath.resize(size - 1); // get rid of null terminator
+            dllPath = wPath;
             #ifdef MYDEBUG
                 FILE* df = nullptr;
                 if (fopen_s(&df, DF_NAME, "w") != 0) {
@@ -283,22 +276,8 @@ BOOL APIENTRY DllMain( HMODULE hModule,
                 }
                 fclose(df);
                 std::string sDllPath = CONVERTER.to_bytes(dllPath);
-                
+                mylog("DLL_PROCESS_ATTACH %s", sDllPath.c_str());
             #endif
-            
-            std::wstring wPath;
-            wPath.resize(MAX_BUFFER_SIZE);
-            //DWORD size = GetModuleFileNameEx((HMODULE)hModule, NULL, &wPath[0], MAX_BUFFER_SIZE); // WTF this doesn't work!?
-            DWORD size = GetModuleFileName((HMODULE)hModule, &wPath[0], MAX_BUFFER_SIZE);
-            DWORD code = GetLastError();
-            mylog("hModule + %lu, Size = %lu, code = %lu", (DWORD)hModule, size, code);
-            std::string sPath = CONVERTER.to_bytes(wPath);
-            mylog("wPath %s", sPath.c_str());
-            wPath.resize(size);
-            sPath = CONVERTER.to_bytes(wPath);
-            mylog("wPath %s", sPath.c_str());            
-            dllPath = wPath;
-            mylog("DLL_PROCESS_ATTACH %s", sDllPath.c_str());
         }
         break;
     case DLL_THREAD_ATTACH:
