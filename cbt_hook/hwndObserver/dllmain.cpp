@@ -16,6 +16,9 @@
 #include <tchar.h>
 #include <fstream>
 #include <mutex>
+#include <chrono>
+#include <unordered_map>
+#include <unordered_set>
 #include "cbt_hook.h"
 
 using nlohmann::json;
@@ -73,10 +76,20 @@ std::unique_ptr<std::thread> cacheDumpThread;
 std::mutex cacheMtx;
 HANDLE hEvent = nullptr;
 
+UINT64 getTimestamp()
+{
+    auto now = std::chrono::high_resolution_clock::now();
+    auto elapsed = now - std::chrono::high_resolution_clock::time_point{};
+    std::uint64_t timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
+    return timestamp;
+}
+
 struct RequestData {
     std::wstring processFilter;
     json hwnds = json::array();
     json errors = json::array();
+    UINT64 timestamp;
+    std::unordered_set<UINT32> allHwnds;
 };
 
 struct InitRequestData {
@@ -214,6 +227,28 @@ std::string loadCache(std::string &fileName)
     return "";
 }
 
+void updateCache(std::unordered_set<UINT32>& allHwnds, UINT64 defaultTimestamp)
+{
+    // mutex must be acquired from calling function!
+    // std::lock_guard<std::mutex> guard(cacheMtx);
+    auto &hwndTimes = hwndCache.hwndTimes;
+    // 1. Drop all hwnds not found during EnumWindows run
+    for (auto it = hwndTimes.begin(); it != hwndTimes.end(); /* no increment */) {
+        UINT32 hwnd = it->first;
+        if (allHwnds.find(hwnd) == allHwnds.end()) {
+            it = hwndTimes.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+    // 2. Add all hwnds that are found, but missing in the cache.
+    for (auto it = allHwnds.begin(); it != allHwnds.end(); it++) {
+        if (hwndTimes.find(*it) == hwndTimes.end()) {
+            hwndTimes.emplace(*it, defaultTimestamp);
+        }
+    }
+}
 std::string terminateCache(std::string& fileName)
 {
     if (!SetEvent(hEvent)) {
@@ -228,7 +263,8 @@ std::string terminateCache(std::string& fileName)
 }
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-    //mylog("MSG %lu %lu %lu %lu", (DWORD)hwnd, (DWORD)uMsg, (DWORD)wParam, (DWORD)lParam);
+    HWND targetHwnd = (HWND)wParam;
+    UINT64 timestamp = getTimestamp();
     switch (uMsg)
     {
     case WM_DESTROY:
@@ -245,10 +281,18 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         return 0;
     case WM_CBT_CREATE_WINDOW_MSG:
         //mylog("WM_CBT_CREATE_WINDOW_MSG");
-        //Beep(750, 300);
-        MessageBeep(0xFFFFFFFF);        return 0;
+        //MessageBeep(0xFFFFFFFF);        
+        {
+            std::lock_guard<std::mutex> guard(cacheMtx);
+            hwndCache.hwndTimes[(DWORD)targetHwnd] = timestamp;
+        }
+        return 0;
     case WM_CBT_DESTROY_WINDOW_MSG:
         //mylog("WM_CBT_DESTROY_WINDOW_MSG");
+        {
+            std::lock_guard<std::mutex> guard(cacheMtx);
+            hwndCache.hwndTimes.erase((DWORD)targetHwnd);
+        }        
         return 0;
     default:
         return DefWindowProc(hwnd, uMsg, wParam, lParam);
@@ -474,6 +518,7 @@ json terminate(json& request)
 BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
 {
     RequestData& data = *reinterpret_cast<RequestData*>(lParam);
+    data.allHwnds.emplace((UINT32)hwnd);
     mylog("cb hwnd=%lu", (UINT32)hwnd);
     std::string sPath;
     DWORD processId;
@@ -523,11 +568,16 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
     }
     wTitle.resize(length);
     std::string sTitle = CONVERTER.to_bytes(wTitle);
+    UINT64 timestamp = data.timestamp;
+    if (hwndCache.hwndTimes.count((UINT32)hwnd) > 0) {
+        timestamp = hwndCache.hwndTimes[(DWORD)hwnd];
+    }
     data.hwnds.push_back({
         {"hwnd", (UINT32)hwnd},
         {"path", sPath},
         {"title", sTitle},
-        });
+        {"timestamp", timestamp},
+    });
     return TRUE;
 }
 
@@ -535,11 +585,16 @@ json queryHwndsImpl(json &request)
 {
     mylog("queryHwndsImpl");
     RequestData data;
+    data.timestamp = getTimestamp();
     if (request.contains(REQ_PROCESS_FILTER)) {
         data.processFilter = CONVERTER.from_bytes(request[REQ_PROCESS_FILTER]);
     }
     mylog("Calling EnumWindows");
-    EnumWindows(EnumWindowsCallback, reinterpret_cast< LPARAM >(&data));
+    {
+        std::lock_guard<std::mutex> guard(cacheMtx);
+        EnumWindows(EnumWindowsCallback, reinterpret_cast<LPARAM>(&data));
+        updateCache(data.allHwnds, data.timestamp);
+    }
     mylog("EnumWindows Done");
     json response = { 
         {"hwnds", data.hwnds},
