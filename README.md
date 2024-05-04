@@ -1,3 +1,3 @@
-# Task Switch asdd-on for NVDA
+# Task Switcher add-on for NVDA
 
 This add-on provides configurable keystrokes to switch between applications.
