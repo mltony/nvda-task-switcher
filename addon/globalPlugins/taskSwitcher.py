@@ -459,72 +459,30 @@ class EditEntryDialog(wx.Dialog):
         self.nameTextCtrl.SetFocus()
         self.Bind(wx.EVT_BUTTON,self.onOk,id=wx.ID_OK)
 
-    def make(self, snippet=None, quiet=False):
-        patternMatch = list(PatternMatch)[self.matchModeCategory.control.GetSelection()]
+    def make(self):
         pattern = self.patternTextCtrl.Value
         pattern = pattern.rstrip("\r\n")
         errorMsg = None
-        if (
-            len(pattern) == 0
-            and  self.getCategory() not in {
-                BookmarkCategory.SCRIPT,
-                BookmarkCategory.NUMERIC_SCRIPT,
-            }
-        ):
-            errorMsg = _('Pattern cannot be empty!')
-        elif patternMatch == PatternMatch.REGEX:
-            try:
-                re.compile(pattern)
-            except re.error as e:
-                errorMsg = _('Failed to compile regular expression: %s') % str(e)
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            errorMsg = _('Failed to compile regular expression: %s') % str(e)
 
         if errorMsg is not None:
             # Translators: This is an error message to let the user know that the pattern field is not valid.
-            gui.messageBox(errorMsg, _("Bookmark entry error"), wx.OK|wx.ICON_WARNING, self)
+            gui.messageBox(errorMsg, _("Task Switcher entry error"), wx.OK|wx.ICON_WARNING, self)
             self.patternTextCtrl.SetFocus()
             return
-        try:
-            attributes = [
-                QJAttributeMatch(userString=attr)
-                for attr in self.attributesTextCtrl.GetValue().strip().split()
-            ]
-        except ValueError as e:
-            errorMsg = _(f'Cannot parse attribute: {e}')
-            gui.messageBox(errorMsg, _("Bookmark Entry Error"), wx.OK|wx.ICON_WARNING, self)
-            self.attributesTextCtrl.SetFocus()
-            return
-        if  self.getCategory() == BookmarkCategory.SKIP_CLUTTER and not quiet:
-            result = gui.messageBox(
-                _("Warning: you are about to create or update a skip clutter bookmark. If your pattern is too generic, it might hide significant part of your website. For example, if you specify a single whitespace as pattern and substring match, then all paragraphs containing at least a single whitespace would disappear. Please make sure you understand how skip clutter works and how to undo this change if you have to. Would you like to continue?"),
-                _("Bookmark Entry warning"),
-                wx.YES|wx.NO|wx.ICON_WARNING,
-                self
-            )
-            if result == wx.YES:
-                pass
-            else:
-                self.categoryComboBox.control.SetFocus()
-                return None
 
-        bookmark = QJBookmark({
-            'enabled': self.enabledCheckBox.Value,
-            'category': self.getCategory(),
-            'name':self.commentTextCtrl.Value,
-            'pattern': pattern,
-            'patternMatch': patternMatch.value,
-            'attributes': [
-                attr.asDict()
-                for attr in attributes
-            ],
-            'message': self.messageTextCtrl.Value,
-            'offset': self.offsetEdit.Value,
-            'snippet':snippet or self.snippet,
-            'keystroke': self.keystroke,
-            #'enableAutoSpeak': self.autoSpeakEnabledCheckBox.Value,
-            'autoSpeakMode': self.getAutoSpeakMode(),
-            'builtInWavFile': self.getBiw(),
-        })
-        return bookmark
+        entry = TSEntry(
+            name=self.nameTextCtrl.Value,
+            pattern= pattern,
+            keystroke= self.keystroke,
+            appName=self.appNameTextCtrl.Value,
+            appPath=self.appPathTextCtrl.Value,
+            index=self.indexEdit .Value,
+        )
+        return entry
 
     def makeNewSite(self):
         if not self.allowSiteSelection:
@@ -584,13 +542,10 @@ class EditEntryDialog(wx.Dialog):
         self.updateCustomKeystrokeButtonLabel()
 
     def onOk(self,evt):
-        bookmark = self.make()
-        if bookmark is not None:
-            newSite = self.makeNewSite()
-            if newSite is  not None:
-                self.bookmark = bookmark
-                self.newSite = newSite
-                evt.Skip()
+        entry = self.make()
+        if entry is not None:
+            self.entry = entry
+            evt.Skip()
 
 
 
