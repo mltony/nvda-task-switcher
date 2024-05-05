@@ -52,6 +52,7 @@ import watchdog
 import wave
 import winUser
 import wx
+import dataclasses
 from dataclasses import dataclass
 from appModules.devenv import VsWpfTextViewTextInfo
 from NVDAObjects import behaviors
@@ -63,6 +64,9 @@ from NVDAObjects.window.scintilla import ScintillaTextInfo
 from NVDAObjects.window.scintilla import Scintilla
 from NVDAObjects.UIA import UIATextInfo
 from NVDAObjects.window.edit import EditTextInfo
+from typing import Optional
+from typing import List
+import globalVars
 
 try:
     REASON_CARET = controlTypes.REASON_CARET
@@ -122,8 +126,62 @@ def setConfig(key, value):
     config.conf[module][key] = value
 
 
+@dataclass
+class TSEntry:
+    name: str
+    appName: str
+    appPath: Optional[str] = ""
+    keystroke: Optional[str] = None
+    pattern: Optional[str] = ""
+    index: int = 0
+
+@dataclass
+class TSConfig:
+    entries: List[TSEntry]
+
+def dataclass_to_dict(dataclass_instance):
+    if hasattr(dataclass_instance, '__dict__'):
+        return dataclass_instance.__dict__
+    if isinstance(dataclass_instance, list):
+        return [dataclass_to_dict(item) for item in dataclass_instance]
+    if isinstance(dataclass_instance, tuple):
+        return tuple(dataclass_to_dict(item) for item in dataclass_instance)
+    if isinstance(dataclass_instance, dict):
+        return {key: dataclass_to_dict(value) for key, value in dataclass_instance.items()}
+    return dataclass_instance
+
+def dict_to_dataclass(cls, dct):
+    if isinstance(dct, dict):
+        return cls(**{key: dict_to_dataclass(value, dct[key]) for key, value in dct.items()})
+    if isinstance(dct, list):
+        return [dict_to_dataclass(cls, item) for item in dct]
+    return dct
+
+
+configFileName = os.path.join(globalVars.appArgs.configPath, "taskSwitcherConfig.json")
+globalConfig = None
+
+def loadConfig():
+    global globalConfig
+    try:
+        configJsonString = "\n".join(open(configFileName, "r", encoding='utf-8').readlines())
+    except OSError:
+        globalConfig = TSConfig([])
+        return
+    globalConfig = dict_to_dataclass(json.loads(configJsonString))
+
+
+def saveConfig():
+    global globalConfig
+    with open(configFileName, "w", encoding='utf-8') as f:
+        print(
+            json.dumps(dataclass_to_dict(globalConfig)),
+            file=f
+        )
+
 addonHandler.initTranslation()
 initConfiguration()
+loadConfig()
 
 
 class SettingsDialog(SettingsPanel):
@@ -354,6 +412,198 @@ def executeAsynchronously(gen):
     else:
         wx.CallLater(value, l)
 
+class EditEntryDialog(wx.Dialog):
+    def __init__(self, parent, entry, entryIndex=None):
+        title=_("Edit Task Switcher entry")
+        super().__init__(parent,title=title)
+        self.entry = entry
+        
+        mainSizer=wx.BoxSizer(wx.VERTICAL)
+        sHelper = guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
+        self.keystroke = self.entry.keystroke
+      # name Edit box
+        label = _("&Name:")
+        self.nameTextCtrl=sHelper.addLabeledControl(label, wx.TextCtrl)
+        self.nameTextCtrl.SetValue(self.entry.name)
+      # appName Edit box
+        label = _("&Application name (executable file name without .exe extension): (required):")
+        self.appNameTextCtrl=sHelper.addLabeledControl(label, wx.TextCtrl)
+        self.appNameTextCtrl.SetValue(self.entry.appName)
+      # Keystroke button
+        self.customeKeystrokeButton = sHelper.addItem (wx.Button (self, label = _("&Keystroke")))
+        self.customeKeystrokeButton.Bind(wx.EVT_BUTTON, self.OnCustomKeystrokeClick)
+        self.updateCustomKeystrokeButtonLabel()
+      # appPath Edit box
+        label = _("&Application full path to executable (optional)")
+        self.appPathTextCtrl=sHelper.addLabeledControl(label, wx.TextCtrl)
+        self.appPathTextCtrl.SetValue(self.entry.appPath)
+      # Translators: Window Title pattern
+        label = _("Window &title regex pattern (optional):")
+        self.patternTextCtrl=sHelper.addLabeledControl(label, wx.TextCtrl)
+        self.patternTextCtrl.SetValue(self.entry.pattern)
+      # Index spinCtrl
+        label = _("Index of selected window (or set to zero to cycle through all available windows):")
+        self.indexEdit = sHelper.addLabeledControl(
+            label,
+            nvdaControls.SelectOnFocusSpinCtrl,
+            min=-10,
+            max=10,
+            initial=self.entry.index,
+        )
+      #  OK/cancel buttons
+        sHelper.addDialogDismissButtons(self.CreateButtonSizer(wx.OK|wx.CANCEL))
+
+        mainSizer.Add(sHelper.sizer,border=20,flag=wx.ALL)
+        mainSizer.Fit(self)
+        self.SetSizer(mainSizer)
+        self.nameTextCtrl.SetFocus()
+        self.Bind(wx.EVT_BUTTON,self.onOk,id=wx.ID_OK)
+
+    def make(self, snippet=None, quiet=False):
+        patternMatch = list(PatternMatch)[self.matchModeCategory.control.GetSelection()]
+        pattern = self.patternTextCtrl.Value
+        pattern = pattern.rstrip("\r\n")
+        errorMsg = None
+        if (
+            len(pattern) == 0
+            and  self.getCategory() not in {
+                BookmarkCategory.SCRIPT,
+                BookmarkCategory.NUMERIC_SCRIPT,
+            }
+        ):
+            errorMsg = _('Pattern cannot be empty!')
+        elif patternMatch == PatternMatch.REGEX:
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                errorMsg = _('Failed to compile regular expression: %s') % str(e)
+
+        if errorMsg is not None:
+            # Translators: This is an error message to let the user know that the pattern field is not valid.
+            gui.messageBox(errorMsg, _("Bookmark entry error"), wx.OK|wx.ICON_WARNING, self)
+            self.patternTextCtrl.SetFocus()
+            return
+        try:
+            attributes = [
+                QJAttributeMatch(userString=attr)
+                for attr in self.attributesTextCtrl.GetValue().strip().split()
+            ]
+        except ValueError as e:
+            errorMsg = _(f'Cannot parse attribute: {e}')
+            gui.messageBox(errorMsg, _("Bookmark Entry Error"), wx.OK|wx.ICON_WARNING, self)
+            self.attributesTextCtrl.SetFocus()
+            return
+        if  self.getCategory() == BookmarkCategory.SKIP_CLUTTER and not quiet:
+            result = gui.messageBox(
+                _("Warning: you are about to create or update a skip clutter bookmark. If your pattern is too generic, it might hide significant part of your website. For example, if you specify a single whitespace as pattern and substring match, then all paragraphs containing at least a single whitespace would disappear. Please make sure you understand how skip clutter works and how to undo this change if you have to. Would you like to continue?"),
+                _("Bookmark Entry warning"),
+                wx.YES|wx.NO|wx.ICON_WARNING,
+                self
+            )
+            if result == wx.YES:
+                pass
+            else:
+                self.categoryComboBox.control.SetFocus()
+                return None
+
+        bookmark = QJBookmark({
+            'enabled': self.enabledCheckBox.Value,
+            'category': self.getCategory(),
+            'name':self.commentTextCtrl.Value,
+            'pattern': pattern,
+            'patternMatch': patternMatch.value,
+            'attributes': [
+                attr.asDict()
+                for attr in attributes
+            ],
+            'message': self.messageTextCtrl.Value,
+            'offset': self.offsetEdit.Value,
+            'snippet':snippet or self.snippet,
+            'keystroke': self.keystroke,
+            #'enableAutoSpeak': self.autoSpeakEnabledCheckBox.Value,
+            'autoSpeakMode': self.getAutoSpeakMode(),
+            'builtInWavFile': self.getBiw(),
+        })
+        return bookmark
+
+    def makeNewSite(self):
+        if not self.allowSiteSelection:
+            return self.oldSite
+        newSite = self.config.sites[self.siteComboBox.control.GetSelection()]
+        if newSite != self.oldSite:
+            result = gui.messageBox(
+                _("Warning: you are about to move this bookmark to site %(new_site)s. "
+                "This bookmark will disappear from the old site %(old_site)s. Would you like to proceed?") % {"new_site": newSite.getDisplayName(), "old_site": self.oldSite.getDisplayName()},
+                _("Bookmark Entry warning"),
+                wx.YES|wx.NO|wx.ICON_WARNING,
+                self
+            )
+            if result == wx.YES:
+                return newSite
+            else:
+                self.siteComboBox.control.SetFocus()
+                return None
+        return self.oldSite
+
+    def updateCustomKeystrokeButtonLabel(self):
+        keystroke = self.keystroke
+        if keystroke:
+            self.customeKeystrokeButton.SetLabel(_("&Keystroke: %s") % (keystroke))
+        else:
+            self.customeKeystrokeButton.SetLabel(_("&Keystroke: %s") % "None")
+
+    def OnCustomKeystrokeClick(self,evt):
+        if inputCore.manager._captureFunc:
+            # don't add while already in process of adding.
+            return
+        def addGestureCaptor(gesture: inputCore.InputGesture):
+            if gesture.isModifier:
+                return False
+            inputCore.manager._captureFunc = None
+            wx.CallAfter(self._addCaptured, gesture)
+            return False
+        inputCore.manager._captureFunc = addGestureCaptor
+        core.callLater(50, ui.message, _("Press desired keystroke now"))
+
+    blackListedKeystrokes = "escape enter numpadenter space nvda+space nvda+n nvda+q nvda+j j tab uparrow downarrow leftarrow rightarrow home end control+home control+end delete".split()
+
+    def _addCaptured(self, gesture):
+        g = getKeystrokeFromGesture(gesture)
+        if g in ["escape", "delete"]:
+            self.keystroke = None
+            msg = _("Keystroke deleted and entry is disable until you select another keystroke")
+        elif g  in self.blackListedKeystrokes:
+            msg = _("Invalid keystroke %s: cannot overload essential  NVDA keystrokes!") % g
+        elif self.bookmark.category.name.startswith('QUICK_JUMP') and 'shift+' in g:
+            msg = _("Invalid keystroke %s: Cannot use keystrokes with shift modifier for quickJump bookmarks!") % g
+        else:
+            self.keystroke = g
+            msg = None
+        if msg:
+            core.callLater(50, ui.message, msg)
+        self.updateCustomKeystrokeButtonLabel()
+
+    def onOk(self,evt):
+        bookmark = self.make()
+        if bookmark is not None:
+            newSite = self.makeNewSite()
+            if newSite is  not None:
+                self.bookmark = bookmark
+                self.newSite = newSite
+                evt.Skip()
+
+
+
+def openEntryDialog(focus=None):
+    appName = focus.appModule.appName
+    entry = TSEntry(
+        name=appName,
+        appName=appName,
+        appPath=focus.appModule.appPath,
+    )
+    dialog = EditEntryDialog(parent=None, entry=entry)
+    if dialog.ShowModal()==wx.ID_OK:
+        tones.beep(500, 50)
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     scriptCategory = _("Task Switcher")
 
@@ -371,44 +621,29 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(SettingsDialog)
 
     def injectHooks(self):
-      # EditableText movement
-        editableText.EditableText.script_caret_moveByWordWordNav = script_caret_moveByWordWordNav
-        editableText.EditableText._EditableText__gestures["kb:control+leftArrow"] = "caret_moveByWordWordNav"
-        editableText.EditableText._EditableText__gestures["kb:control+rightArrow"] = "caret_moveByWordWordNav"
-        editableText.EditableText._EditableText__gestures["kb:control+Windows+leftArrow"] = "caret_moveByWordWordNav"
-        editableText.EditableText._EditableText__gestures["kb:control+Windows+rightArrow"] = "caret_moveByWordWordNav"
-        behaviors.EditableText._EditableText__gestures["kb:control+leftArrow"] = "caret_moveByWordWordNav"
-        behaviors.EditableText._EditableText__gestures["kb:control+rightArrow"] = "caret_moveByWordWordNav"
-      # EditableText word selection
-        editableText.EditableText.script_selectByWordWordNav = script_selectByWordWordNav
-        editableText.EditableText._EditableText__gestures["kb:control+leftArrow+shift"] = "selectByWordWordNav"
-        editableText.EditableText._EditableText__gestures["kb:control+rightArrow+shift"] = "selectByWordWordNav"
-        editableText.EditableText._EditableText__gestures["kb:control+numpad1+shift"] = "selectByWordWordNav"
-        editableText.EditableText._EditableText__gestures["kb:control+Windows+leftArrow+shift"] = "selectByWordWordNav"
-        editableText.EditableText._EditableText__gestures["kb:control+Windows+rightArrow+shift"] = "selectByWordWordNav"
-        editableText.EditableText._EditableText__gestures["kb:control+Windows+numpad1+shift"] = "selectByWordWordNav"
-      # EditableText character selection
-        editableText.EditableText.script_selectByCharacterWordNav = script_selectByCharacterWordNav
-        editableText.EditableText._EditableText__gestures["kb:leftArrow+shift"] = "selectByCharacterWordNav"
-        editableText.EditableText._EditableText__gestures["kb:rightArrow+shift"] = "selectByCharacterWordNav"
-      # CursorManager word movement
-        cursorManager.CursorManager.script_caret_moveByWordWordNav = script_caret_moveByWordWordNav
-        cursorManager.CursorManager._CursorManager__gestures["kb:control+leftArrow"] = "caret_moveByWordWordNav"
-        cursorManager.CursorManager._CursorManager__gestures["kb:control+rightArrow"] = "caret_moveByWordWordNav"
-        cursorManager.CursorManager._CursorManager__gestures["kb:control+Windows+leftArrow"] = "caret_moveByWordWordNav"
-        cursorManager.CursorManager._CursorManager__gestures["kb:control+Windows+rightArrow"] = "caret_moveByWordWordNav"
-      # CursorManager word selection
-        cursorManager.CursorManager.script_selectByWordWordNav = script_selectByWordWordNav
-        cursorManager.CursorManager._CursorManager__gestures["kb:control+leftArrow+shift"] = "selectByWordWordNav"
-        cursorManager.CursorManager._CursorManager__gestures["kb:control+rightArrow+shift"] = "selectByWordWordNav"
-        cursorManager.CursorManager._CursorManager__gestures["kb:control+Windows+leftArrow+shift"] = "selectByWordWordNav"
-        cursorManager.CursorManager._CursorManager__gestures["kb:control+Windows+rightArrow+shift"] = "selectByWordWordNav"
-      # inputManager.executeGesture
-        global originalExecuteGesture
-        originalExecuteGesture = inputCore.InputManager.executeGesture
-        inputCore.InputManager.executeGesture = preExecuteGesture
-
-
+        pass
 
     def  removeHooks(self):
         pass
+
+    @script(description="Show task switcher op-up menu", gestures=['kb:nvda+`'])
+    def script_taskSwitcherPopupMenu(self, gesture):
+        focus = api.getFocusObject()
+        gui.mainFrame.prePopup()
+        try:
+            frame = wx.Frame(None, -1,"Fake popup frame", pos=(1, 1),size=(1, 1))
+            menu = wx.Menu()
+            item = menu.Append(wx.ID_ANY, _("&Create new entry for this application"))
+            frame.Bind(
+                wx.EVT_MENU,
+                lambda evt, focus=focus: openEntryDialog(focus=focus),
+                item,
+            )
+            frame.Bind(
+                wx.EVT_MENU_CLOSE,
+                lambda evt: frame.Close()
+            )
+            frame.Show()
+            wx.CallAfter(lambda: frame.PopupMenu(menu))
+        finally:
+            gui.mainFrame.postPopup()
