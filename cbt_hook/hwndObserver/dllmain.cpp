@@ -156,8 +156,9 @@ std::string dumpCache(std::string &fileName)
             std::string msg = "Error opening " + tmpFileName;
             return msg;
         }
-        json j = hwndCache;
-        fout << j;
+        json j =hwndCache;
+        std::string jsonStr= j.dump(4);
+        fout << jsonStr;
     }
     std::remove(fileName.c_str());
     std::rename(tmpFileName.c_str(), fileName.c_str());

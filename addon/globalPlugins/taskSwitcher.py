@@ -67,6 +67,7 @@ from NVDAObjects.window.edit import EditTextInfo
 from typing import Optional
 from typing import List
 import globalVars
+from ctypes import cdll, c_void_p, c_wchar_p, c_char_p
 
 try:
     REASON_CARET = controlTypes.REASON_CARET
@@ -115,6 +116,7 @@ def initConfiguration():
         "wordCount": "integer( default=5, min=1, max=1000)",
         "applicationsBlacklist" : f"string( default='')",
         "disableInGoogleDocs" : "boolean( default=False)",
+        "observerCacheFile" : "string( default='%TMP%\\NVDATaskSwitcherObserverCache.json')",
     }
     config.conf.spec[module] = confspec
 
@@ -183,26 +185,73 @@ def old_dictToDataclass(cls, dct):
 
 configFileName = os.path.join(globalVars.appArgs.configPath, "taskSwitcherConfig.json")
 globalConfig = None
+globalGesturesToEntries = None
+
+def getGlobalPluginInstance():
+    results = [g for g in list(globalPluginHandler.runningPlugins) if isinstance(g, GlobalPlugin)]
+    if len(results) == 1:
+        return results[0]
+    elif len(results) == 0:
+        raise RuntimeError("TaskSwitcher is not running!")
+    raise RuntimeError("Woot!")
 
 def updateKeystrokes():
-    cls = GlobalPlugin
-    gestures = getattr(cls, f"_{cls.__name__}__gestures")
-    QF = "taskSwitch"
-    gestures = {
-        keystroke: script
-        for keystroke, script in gestures.items()
-        if script != QF
+    if False:
+        cls = GlobalPlugin
+        gestures = getattr(cls, f"_{cls.__name__}__gestures")
+        QF = "taskSwitch"
+        gestures = {
+            keystroke: script
+            for keystroke, script in gestures.items()
+            if script != QF
+        }
+        gestures = {
+            **gestures,
+            **{
+                keyboardHandler.KeyboardInputGesture.fromName(entry.keystroke).identifiers[-1]: QF
+                for entry in globalConfig.entries
+                if entry.keystroke
+            },
+        }
+        setattr(cls, f"_{cls.__name__}__gestures", gestures)
+    if True:
+        gp = getGlobalPluginInstance()
+        gp._gestureMap = {
+            **{
+                keystroke: func
+                for keystroke, func in gp._gestureMap.items()
+                if func != GlobalPlugin.script_taskSwitch
+            },
+            **{
+                keyboardHandler.KeyboardInputGesture.fromName(entry.keystroke).normalizedIdentifiers[-1]: GlobalPlugin.script_taskSwitch
+                for entry in globalConfig.entries
+                if entry.keystroke
+            },
+        }
+    
+    global globalGesturesToEntries
+    globalGesturesToEntries = {
+        getKeystrokeFromGesture(keyboardHandler.KeyboardInputGesture.fromName(entry.keystroke)): entry
+        for entry in globalConfig.entries
+        if entry.keystroke
     }
-    gestures = {
-        **gestures,
-        **{
-            keyboardHandler.KeyboardInputGesture.fromName(entry.keystroke).normalizedIdentifiers[-1]: QF
-            for entry in globalConfig.entries
-            if entry.keystroke
-        },
-    }
-    setattr(cls, f"_{cls.__name__}__gestures", gestures)
 
+def updateKeystrokesWhenPluginsLoaded():
+    lastException = None
+    t = time.time()
+    TIMEOUT_SECS = 10.0
+    timeout = t + TIMEOUT_SECS
+    while time.time() < timeout:
+        try:
+            gp = getGlobalPluginInstance()
+        except RuntimeError as e:
+            lastException = e
+            yield 50
+            continue
+        updateKeystrokes()
+        return
+    raise RuntimeError("Failed to update gestures as plugin is still not loaded after timeout", lastException)
+            
 
 def loadConfig():
     global globalConfig
@@ -217,8 +266,13 @@ def loadConfig():
     j = json.loads(configJsonString, cls=DataclassDecoder)
     #globalConfig = DataclassDecoder.object_hook(DataclassDecoder(), j)
     globalConfig = poorManDecode(j)
-    updateKeystrokes()
+    #updateKeystrokes()
+    executeAsynchronously(updateKeystrokesWhenPluginsLoaded())
 
+def lazyLoadConfig():
+    if globalConfig is not None:
+        return
+    loadConfig()
 
 def saveConfig():
     global globalConfig
@@ -231,6 +285,50 @@ def saveConfig():
             file=f
         )
 
+observerDll = None
+def queryObserver(command, **kwargs):
+    request = {
+        **{
+            "command": command,
+        },
+        **kwargs,
+    }
+    result = observerDll.queryHwnds(json.dumps(request).encode('utf-8'))
+    try:
+        response_wchar_p = c_char_p(result)
+        response_str = response_wchar_p.value
+        j = json.loads(response_str.decode('utf-8'))
+        #log.error(f"asdf {json.dumps(j, indent=4)}")
+        if "error" in j and len(j['error']) > 0:
+            error = j['error']
+            raise RuntimeError(f"HWNDObserver error: {error}")
+        return j
+    finally:
+        observerDll.freeBuffer(result)
+
+def initHwndObserver():
+    global observerDll
+    dllPath = os.path.join(os.path.dirname(__file__), 'hwndObserver.dll')
+    observerDll = cdll.LoadLibrary(dllPath)
+    observerDll.queryHwnds.argtypes = [c_char_p]
+    observerDll.queryHwnds.restype = c_void_p
+    observerDll.freeBuffer.argtypes = [c_void_p]
+    observerDll.freeBuffer.restype = None
+    
+    cacheFileName = os.path.expandvars(getConfig("observerCacheFile"))
+    api.c = cacheFileName
+    queryObserver("init", cacheFileName=cacheFileName)
+    
+def lazyInitHwndObserver():
+    if observerDll is not None:
+        return
+    initHwndObserver()
+
+
+def destroyHwndObserver():
+    queryObserver("terminate")
+    global observerDll
+    observerDll = None
 addonHandler.initTranslation()
 initConfiguration()
 
@@ -738,6 +836,7 @@ class SettingsEntriesDialog(SettingsDialog):
         global globalConfig
         globalConfig = self.config
         saveConfig()
+        loadConfig()
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
@@ -748,12 +847,17 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.createMenu()
         self.injectHooks()
         self.beeper = Beeper()
+        #wx.CallLater(2000, initHwndObserver)
+        #initHwndObserver()
+        #core.callLater(1000, loadConfig)
+        loadConfig()
 
     def createMenu(self):
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(SettingsDialog)
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(SettingsEntriesDialog)
 
     def terminate(self):
+        destroyHwndObserver()
         self.removeHooks()
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(SettingsDialog)
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(SettingsEntriesDialog)
@@ -806,17 +910,23 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     @script(description="IndentNav QuickFind generic script", gestures=['kb:Windows+z'])
     def script_taskSwitch(self, gesture):
         tones.beep(500, 50)
+        lazyInitHwndObserver()
+        entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
+        ui.message(entry.name)
 
-    @script(description="Show task switcher op-up menu", gestures=['kb:nvda+z'])
+    @script(description="Debug", gestures=['kb:windows+x'])
     def script_debug(self, gesture):
         tones.beep(500, 50)
-        #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(SettingsEntriesDialog))
-        #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(QQQBrailleDisplaySelectionDialog))
-        #gui.mainFrame._popupSettingsDialog(QQQBrailleDisplaySelectionDialog)
-        from gui.settingsDialogs import BrailleDisplaySelectionDialog
-        q = QQQBrailleDisplaySelectionDialog(parent=gui.mainFrame)
-        q.Show()
-        
-        #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(BrailleDisplaySelectionDialog))
+        lazyInitHwndObserver()        
+        if False:
+            pass
+            #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(SettingsEntriesDialog))
+            #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(QQQBrailleDisplaySelectionDialog))
+            #initHwndObserver()
+            #gui.mainFrame._popupSettingsDialog(QQQBrailleDisplaySelectionDialog)
+            from gui.settingsDialogs import BrailleDisplaySelectionDialog
+            q = QQQBrailleDisplaySelectionDialog(parent=gui.mainFrame)
+            q.Show()
+            
+            #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(BrailleDisplaySelectionDialog))
 
-loadConfig()
