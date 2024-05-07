@@ -23,7 +23,7 @@ import editableText
 import globalPluginHandler
 import gui
 from gui import guiHelper, nvdaControls
-from gui.settingsDialogs import SettingsPanel
+from gui.settingsDialogs import SettingsPanel, SettingsDialog, BrailleDisplaySelectionDialog
 import inputCore
 import itertools
 import json
@@ -139,27 +139,70 @@ class TSEntry:
 class TSConfig:
     entries: List[TSEntry]
 
-def dataclass_to_dict(dataclass_instance):
+class DataclassEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if dataclasses.is_dataclass(obj):
+            return dataclasses.asdict(obj)
+        return super().default(obj)
+
+class DataclassDecoder(json.JSONDecoder):
+    # This shit doesn't work
+    def object_hook(self, dct):
+        if 'name' in dct:
+            return TSEntry(**dct)
+        if 'entries' in dct:
+            entries = [self.object_hook(entryDct) for entryDct in dct['entries']]
+            return TSConfig(entries=entries)
+        return dct
+
+def poorManDecode(dct):
+    if 'name' in dct:
+        return TSEntry(**dct)
+    if 'entries' in dct:
+        entries = [poorManDecode(entryDct) for entryDct in dct['entries']]
+        return TSConfig(entries=entries)
+    return dct
+def old_dataclassToDict(dataclass_instance):
     if hasattr(dataclass_instance, '__dict__'):
         return dataclass_instance.__dict__
     if isinstance(dataclass_instance, list):
-        return [dataclass_to_dict(item) for item in dataclass_instance]
+        return [dataclassToDict(item) for item in dataclass_instance]
     if isinstance(dataclass_instance, tuple):
-        return tuple(dataclass_to_dict(item) for item in dataclass_instance)
+        return tuple(dataclassToDict(item) for item in dataclass_instance)
     if isinstance(dataclass_instance, dict):
-        return {key: dataclass_to_dict(value) for key, value in dataclass_instance.items()}
+        return {key: dataclassToDict(value) for key, value in dataclass_instance.items()}
     return dataclass_instance
 
-def dict_to_dataclass(cls, dct):
+def old_dictToDataclass(cls, dct):
     if isinstance(dct, dict):
-        return cls(**{key: dict_to_dataclass(value, dct[key]) for key, value in dct.items()})
+        return cls(**{key: dictToDataclass(value, dct[key]) for key, value in dct.items()})
     if isinstance(dct, list):
-        return [dict_to_dataclass(cls, item) for item in dct]
+        return [dictToDataclass(cls, item) for item in dct]
     return dct
 
 
 configFileName = os.path.join(globalVars.appArgs.configPath, "taskSwitcherConfig.json")
 globalConfig = None
+
+def updateKeystrokes():
+    cls = GlobalPlugin
+    gestures = getattr(cls, f"_{cls.__name__}__gestures")
+    QF = "taskSwitch"
+    gestures = {
+        keystroke: script
+        for keystroke, script in gestures.items()
+        if script != QF
+    }
+    gestures = {
+        **gestures,
+        **{
+            keyboardHandler.KeyboardInputGesture.fromName(entry.keystroke).normalizedIdentifiers[-1]: QF
+            for entry in globalConfig.entries
+            if entry.keystroke
+        },
+    }
+    setattr(cls, f"_{cls.__name__}__gestures", gestures)
+
 
 def loadConfig():
     global globalConfig
@@ -168,21 +211,28 @@ def loadConfig():
     except OSError:
         globalConfig = TSConfig([])
         return
-    globalConfig = dict_to_dataclass(json.loads(configJsonString))
+    if len(configJsonString) == 0:
+        globalConfig = TSConfig([])
+        return
+    j = json.loads(configJsonString, cls=DataclassDecoder)
+    #globalConfig = DataclassDecoder.object_hook(DataclassDecoder(), j)
+    globalConfig = poorManDecode(j)
+    updateKeystrokes()
 
 
 def saveConfig():
     global globalConfig
+    #api.c=globalConfig
+    #api.d=dataclassToDict(globalConfig)
     with open(configFileName, "w", encoding='utf-8') as f:
         print(
-            json.dumps(dataclass_to_dict(globalConfig)),
+            #json.dumps(dataclassToDict(globalConfig)),
+            json.dumps(globalConfig, cls=DataclassEncoder, indent=4),
             file=f
         )
 
 addonHandler.initTranslation()
 initConfiguration()
-loadConfig()
-
 
 class SettingsDialog(SettingsPanel):
     # Translators: Title for the settings dialog
@@ -412,12 +462,17 @@ def executeAsynchronously(gen):
     else:
         wx.CallLater(value, l)
 
+def getKeystrokeFromGesture(gesture):
+    keystroke = gesture.identifiers[-1].split(':')[1]
+    return keystroke
+
 class EditEntryDialog(wx.Dialog):
-    def __init__(self, parent, entry, entryIndex=None):
+    def __init__(self, parent, entry, index=None, config=None):
         title=_("Edit Task Switcher entry")
         super().__init__(parent,title=title)
         self.entry = entry
-        
+        self.index = index
+        self.config = config or globalConfig
         mainSizer=wx.BoxSizer(wx.VERTICAL)
         sHelper = guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
         self.keystroke = self.entry.keystroke
@@ -474,11 +529,26 @@ class EditEntryDialog(wx.Dialog):
             self.patternTextCtrl.SetFocus()
             return
 
+        name = self.nameTextCtrl.Value
+        appName = self.appNameTextCtrl.Value
+        if name in [e.name for i,e in enumerate(self.config.entries) if i != self.index]:
+            errorMsg = _("Error: this name is already used for another entry. Please specify a unique name.")
+            gui.messageBox(errorMsg, _("Task Switcher entry error"), wx.OK|wx.ICON_WARNING, self)
+            self.nameTextCtrl.SetFocus()
+            return
+        
+        if len(appName) == 0:
+            errorMsg = _("Error: application name must be specified.")
+            gui.messageBox(errorMsg, _("Task Switcher entry error"), wx.OK|wx.ICON_WARNING, self)
+            self.appNameTextCtrl.SetFocus()
+            return
+
+
         entry = TSEntry(
-            name=self.nameTextCtrl.Value,
+            name=name,
             pattern= pattern,
             keystroke= self.keystroke,
-            appName=self.appNameTextCtrl.Value,
+            appName=appName,
             appPath=self.appPathTextCtrl.Value,
             index=self.indexEdit .Value,
         )
@@ -532,7 +602,7 @@ class EditEntryDialog(wx.Dialog):
             msg = _("Keystroke deleted and entry is disable until you select another keystroke")
         elif g  in self.blackListedKeystrokes:
             msg = _("Invalid keystroke %s: cannot overload essential  NVDA keystrokes!") % g
-        elif self.bookmark.category.name.startswith('QUICK_JUMP') and 'shift+' in g:
+        elif False and 'shift+' in g:
             msg = _("Invalid keystroke %s: Cannot use keystrokes with shift modifier for quickJump bookmarks!") % g
         else:
             self.keystroke = g
@@ -558,7 +628,118 @@ def openEntryDialog(focus=None):
     )
     dialog = EditEntryDialog(parent=None, entry=entry)
     if dialog.ShowModal()==wx.ID_OK:
-        tones.beep(500, 50)
+        global globalConfig
+        globalConfig.entries.append(entry)
+        saveConfig()
+        loadConfig()
+        
+class SettingsEntriesDialog(SettingsDialog):
+    title = _("TaskSwitcher entries")
+
+    #def __init__(self, *args, **kwargs):
+        #super().__init__(*args, **kwargs)
+
+    def makeSettings(self, settingsSizer):
+        global globalConfig
+        self.config = copy.deepcopy(globalConfig)
+
+        sHelper = gui.guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
+      # Entries table
+        label = _("&Entries")
+        self.entriesList = sHelper.addLabeledControl(
+            label,
+            nvdaControls.AutoWidthColumnListCtrl,
+            autoSizeColumn=3,
+            itemTextCallable=self.getItemTextForList,
+            style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_VIRTUAL
+        )
+
+        self.entriesList.InsertColumn(0, _("Name"), width=self.scaleSize(150))
+        self.entriesList.InsertColumn(1, _("Keystroke"))
+        self.entriesList.InsertColumn(2, _("AppName"))
+        self.entriesList.InsertColumn(3, _("AppPath"))
+        self.entriesList.InsertColumn(4, _("WindowRegex"))
+        self.entriesList.InsertColumn(5, _("Index"))
+        self.entriesList.Bind(wx.EVT_LIST_ITEM_FOCUSED, self.onListItemFocused)
+        self.entriesList.ItemCount = len(self.config.entries)
+
+        bHelper = sHelper.addItem(guiHelper.ButtonHelper(orientation=wx.HORIZONTAL))
+      # Buttons
+        self.addButton = bHelper.addButton(self, label=_("&Add"))
+        self.addButton.Bind(wx.EVT_BUTTON, self.OnAddClick)
+        self.editButton = bHelper.addButton(self, label=_("&Edit"))
+        self.editButton.Bind(wx.EVT_BUTTON, self.OnEditClick)
+        self.removeButton = bHelper.addButton(self, label=_("&Remove"))
+        self.removeButton.Bind(wx.EVT_BUTTON, self.OnRemoveClick)
+        #self.moveUpButton = bHelper.addButton(self, label=_("Move &up"))
+        #self.moveUpButton.Bind(wx.EVT_BUTTON, lambda evt: self.OnMoveClick(evt, -1))
+        #self.moveDownButton = bHelper.addButton(self, label=_("Move &down"))
+        #self.moveDownButton.Bind(wx.EVT_BUTTON, lambda evt: self.OnMoveClick(evt, 1))
+        #self.sortButton = bHelper.addButton(self, label=_("&Sort"))
+        #self.sortButton.Bind(wx.EVT_BUTTON, self.OnSortClick)
+
+    def postInit(self):
+        self.sitesList.SetFocus()
+
+    def getItemTextForList(self, item, column):
+        entry = self.config.entries[item]
+        if column == 0:
+            return entry.name
+        elif column == 1:
+            return entry.keystroke or "None"
+        elif column == 2:
+            return entry.appName
+        elif column == 3:
+            return entry.appPath
+        elif column == 4:
+            return entry.pattern
+        elif column == 5:
+            return str(entry.index)
+        else:
+            raise ValueError("Unknown column: %d" % column)
+
+    def onListItemFocused(self, evt):
+        if self.entriesList.GetSelectedItemCount()!=1:
+            return
+        index=self.entriesList.GetFirstSelected()
+        entry = self.config.entries[index]
+
+    def OnAddClick(self,evt):
+        errorMsg = _("In order to add new entry, please switch to the desired application, open Task Swittcher menu by pressing NVDA+control+f12 and select 'create a new entry'")
+        gui.messageBox(errorMsg, _("Bookmark Error"), wx.OK|wx.ICON_WARNING, self),
+
+    def OnEditClick(self,evt):
+        if self.entriesList.GetSelectedItemCount()!=1:
+            return
+        editIndex=self.entriesList.GetFirstSelected()
+        if editIndex<0:
+            return
+        entry = self.config.entries[editIndex]
+        dialog = EditEntryDialog(parent=self, entry=entry, index=editIndex, config=self.config)
+        if dialog.ShowModal()==wx.ID_OK:
+            self.config.entries[editIndex] = dialog.entry
+            self.OnSortClick(None)
+            self.entriesList.SetFocus()
+
+    def OnRemoveClick(self,evt):
+        entries = list(self.config.entries)
+        index=self.entriesList.GetFirstSelected()
+        while index>=0:
+            self.entriesList.DeleteItem(index)
+            del entries[index]
+            index=self.entriesList.GetNextSelected(index)
+        self.config .entries = entries
+        self.entriesList.SetFocus()
+
+    def OnSortClick(self,evt):
+        self.config.entries.sort(key=lambda e:e.name)
+
+    def onSave(self):
+        global globalConfig
+        globalConfig = self.config
+        saveConfig()
+
+
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     scriptCategory = _("Task Switcher")
 
@@ -570,10 +751,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
     def createMenu(self):
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(SettingsDialog)
+        gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(SettingsEntriesDialog)
 
     def terminate(self):
         self.removeHooks()
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(SettingsDialog)
+        gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(SettingsEntriesDialog)
 
     def injectHooks(self):
         pass
@@ -581,19 +764,36 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def  removeHooks(self):
         pass
 
-    @script(description="Show task switcher op-up menu", gestures=['kb:nvda+`'])
+    @script(description="Show task switcher op-up menu", gestures=['kb:nvda+control+f12'])
     def script_taskSwitcherPopupMenu(self, gesture):
         focus = api.getFocusObject()
         gui.mainFrame.prePopup()
         try:
             frame = wx.Frame(None, -1,"Fake popup frame", pos=(1, 1),size=(1, 1))
             menu = wx.Menu()
+          # Create new entry
             item = menu.Append(wx.ID_ANY, _("&Create new entry for this application"))
             frame.Bind(
                 wx.EVT_MENU,
                 lambda evt, focus=focus: openEntryDialog(focus=focus),
                 item,
             )
+          # Show all entries
+            # this piece of shit doesn't work
+            if False:
+                item = menu.Append(wx.ID_ANY, _("&Show all entries"))
+                try:
+                    popupFunc = gui.mainFrame._popupSettingsDialog
+                except AttributeError:
+                    popupFunc = gui.mainFrame.popupSettingsDialog
+                def showEntriesWindow(evt):
+                    wx.CallAfter(lambda: popupFunc(SettingsEntriesDialog))
+                frame.Bind(
+                    wx.EVT_MENU,
+                    showEntriesWindow,
+                    item,
+                )
+          # Close menu handler
             frame.Bind(
                 wx.EVT_MENU_CLOSE,
                 lambda evt: frame.Close()
@@ -602,3 +802,21 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             wx.CallAfter(lambda: frame.PopupMenu(menu))
         finally:
             gui.mainFrame.postPopup()
+
+    @script(description="IndentNav QuickFind generic script", gestures=['kb:Windows+z'])
+    def script_taskSwitch(self, gesture):
+        tones.beep(500, 50)
+
+    @script(description="Show task switcher op-up menu", gestures=['kb:nvda+z'])
+    def script_debug(self, gesture):
+        tones.beep(500, 50)
+        #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(SettingsEntriesDialog))
+        #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(QQQBrailleDisplaySelectionDialog))
+        #gui.mainFrame._popupSettingsDialog(QQQBrailleDisplaySelectionDialog)
+        from gui.settingsDialogs import BrailleDisplaySelectionDialog
+        q = QQQBrailleDisplaySelectionDialog(parent=gui.mainFrame)
+        q.Show()
+        
+        #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(BrailleDisplaySelectionDialog))
+
+loadConfig()
