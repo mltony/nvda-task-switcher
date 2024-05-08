@@ -927,8 +927,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         #lazyInitHwndObserver()
         entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
         #ui.message(entry.name)
-        j = queryObserver("queryHwnds", )
-        #process_filter=entry.appName+".exe"
+        j = queryObserver("queryHwnds", process_filter=entry.appName+".exe")
+        #
         api.j = j
         n = len(j['hwnds'])
         t1 = time.time()

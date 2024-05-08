@@ -126,6 +126,7 @@ void from_json(const json& j, HwndCache& cache) {
 
 std::string getBootTime()
 {
+    // Don't use this one. somehow calling this command from within NVDA triggers COM exception.
     FILE* pipe = _popen(BOOT_TIME_COMMAND.c_str(), "r");
     if (!pipe) {
         return "Cannot open pipe!";
@@ -543,6 +544,9 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
             wPath.resize(size - 1); // get rid of null terminator
             if (data.processFilter.length() > 0) {
                 passesFilter = data.processFilter == wPath;
+                //std::string actual = CONVERTER.to_bytes(wPath);
+                //std::string pf = CONVERTER.to_bytes(data.processFilter);
+                //mylog("asdf '%s' '%s'", actual.c_str(), pf.c_str());
             }
             sPath = CONVERTER.to_bytes(wPath);
             CloseHandle(processHandle);
@@ -596,7 +600,14 @@ json queryHwndsImpl(json &request)
     mylog("Calling EnumWindows");
     {
         std::lock_guard<std::mutex> guard(cacheMtx);
+        auto start = std::chrono::high_resolution_clock::now();
         EnumWindows(EnumWindowsCallback, reinterpret_cast<LPARAM>(&data));
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration);
+        int ms_int = ms.count();
+        int dt = ms_int;
+        mylog("asdf dt %d us", dt);
         updateCache(data.allHwnds, data.timestamp);
     }
     mylog("EnumWindows Done");
