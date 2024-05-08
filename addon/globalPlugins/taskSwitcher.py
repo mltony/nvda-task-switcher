@@ -68,6 +68,7 @@ from typing import Optional
 from typing import List
 import globalVars
 from ctypes import cdll, c_void_p, c_wchar_p, c_char_p
+import subprocess
 
 try:
     REASON_CARET = controlTypes.REASON_CARET
@@ -304,7 +305,22 @@ def queryObserver(command, **kwargs):
             raise RuntimeError(f"HWNDObserver error: {error}")
         return j
     finally:
-        observerDll.freeBuffer(result)
+        #observerDll.freeBuffer(result)
+        pass
+
+def getBootupTime():
+    """
+        Why the hell this function causes a com error!?
+        Traceback (most recent call last):
+        _ctypes.COMError: (-2147418094, 'The callee (server [not server application]) is not available and disappeared; all connections are invalid. The call did not execute.', (None, None, None, 0, None))
+    """
+    result = subprocess.run(['wmic', 'os', 'get', 'lastbootuptime'], capture_output=True, text=True)
+    output = result.stdout.strip()
+    return output.splitlines()[2]
+
+def getBootupTime2():
+    import psutil
+    return str(psutil.boot_time())
 
 def initHwndObserver():
     global observerDll
@@ -316,8 +332,8 @@ def initHwndObserver():
     observerDll.freeBuffer.restype = None
     
     cacheFileName = os.path.expandvars(getConfig("observerCacheFile"))
-    api.c = cacheFileName
-    queryObserver("init", cacheFileName=cacheFileName)
+    bootupTime = getBootupTime2()
+    #queryObserver("init", cacheFileName=cacheFileName, bootupTime=bootupTime)
     
 def lazyInitHwndObserver():
     if observerDll is not None:
@@ -716,7 +732,6 @@ class EditEntryDialog(wx.Dialog):
             evt.Skip()
 
 
-
 def openEntryDialog(focus=None):
     appName = focus.appModule.appName
     entry = TSEntry(
@@ -847,9 +862,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.createMenu()
         self.injectHooks()
         self.beeper = Beeper()
-        #wx.CallLater(2000, initHwndObserver)
-        #initHwndObserver()
-        #core.callLater(1000, loadConfig)
+        initHwndObserver()
         loadConfig()
 
     def createMenu(self):
@@ -909,15 +922,23 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
     @script(description="IndentNav QuickFind generic script", gestures=['kb:Windows+z'])
     def script_taskSwitch(self, gesture):
-        tones.beep(500, 50)
-        lazyInitHwndObserver()
+        t0 = time.time()
+        #tones.beep(500, 50)
+        #lazyInitHwndObserver()
         entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
-        ui.message(entry.name)
+        #ui.message(entry.name)
+        j = queryObserver("queryHwnds", )
+        #process_filter=entry.appName+".exe"
+        api.j = j
+        n = len(j['hwnds'])
+        t1 = time.time()
+        dt = int(1000*(t1-t0))
+        ui.message(f"{n} woohoo {dt} ms")
 
     @script(description="Debug", gestures=['kb:windows+x'])
     def script_debug(self, gesture):
         tones.beep(500, 50)
-        lazyInitHwndObserver()        
+        #lazyInitHwndObserver()        
         if False:
             pass
             #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(SettingsEntriesDialog))

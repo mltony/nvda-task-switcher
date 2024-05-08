@@ -179,10 +179,10 @@ void cacheDumpThreadFunc(std::string fileName)
     mylog("CDTF:finish");
 }
 
-std::string loadCache(std::string &fileName)
+std::string loadCache(std::string &fileName, std::string &bootTime)
 {
     std::lock_guard<std::mutex> guard(cacheMtx);
-    std::string bootTime = getBootTime();
+    //std::string bootTime = getBootTime();
     mylog("Current boot time: %s", bootTime.c_str());
     if (bootTime.length() == 0) {
         mylog("Retrieved boot time is empty");
@@ -432,13 +432,15 @@ json init(json& request)
 {
     mylog("init");
     InitRequestData data;
+    
     if (!request.contains("cacheFileName")) {
         data.error = "cacheFileName not specified";
         return data;
     }
-    cacheFileName = request["cacheFileName"];
+    std::string cacheFileName = request["cacheFileName"];
+    std::string bootupTime = request["bootupTime"];
     mylog("init:loading cache");
-    std::string error = loadCache(cacheFileName);
+    std::string error = loadCache(cacheFileName, bootupTime);
     if (!error.empty()) {
         data.error = "Failed to load cache from file: " + error;
         return data;
@@ -454,6 +456,7 @@ json init(json& request)
         return data;
     }
     mylog("init:launching cbt clients...");
+    
     for (std::string arch : arches) {
         if (!spawnCbtClient(data, arch)) {
             return data;
