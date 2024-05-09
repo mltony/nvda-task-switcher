@@ -920,20 +920,46 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         finally:
             gui.mainFrame.postPopup()
 
-    @script(description="IndentNav QuickFind generic script", gestures=['kb:Windows+z'])
+    @script(description="Task Switcher script", gestures=['kb:Windows+z'])
     def script_taskSwitch(self, gesture):
         t0 = time.time()
         #tones.beep(500, 50)
         #lazyInitHwndObserver()
         entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
         #ui.message(entry.name)
-        j = queryObserver("queryHwnds", process_filter=entry.appName+".exe")
+        j = queryObserver("queryHwnds", process_filter=r"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.ex")
         #
         api.j = j
         n = len(j['hwnds'])
         t1 = time.time()
         dt = int(1000*(t1-t0))
-        ui.message(f"{n} woohoo {dt} ms")
+        #ui.message(f"{n} woohoo {dt} ms")
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
+        GetParent = user32.GetParent
+        GetParent.argtypes = [ctypes.c_void_p]
+        GetParent.restype = ctypes.c_void_p
+        
+        from ctypes.wintypes import HWND
+        api.j = j
+        hwndsInt = [int(x['hwnd']) for x in j['hwnds']]
+        hwnds = [HWND(int(x['hwnd'])) for x in j['hwnds']]
+        q = []
+        for hwnd in hwnds:
+            isVisible  = winUser.isWindowVisible(hwnd)
+            if not isVisible:
+                continue
+            parent_hwnd = GetParent(hwnd)
+            #log.error(f"{type(parent_hwnd)} {parent_hwnd}")
+            if parent_hwnd is not None and int(parent_hwnd) in hwndsInt:
+                continue
+            text = winUser.getWindowText(hwnd)
+            text2 = winUser.getWindowText(parent_hwnd)
+            q.append(f"'{text}' '{text2}' {parent_hwnd}")
+        api.q = q
+        tones.beep(500, 50)
+        
+        
+        
 
     @script(description="Debug", gestures=['kb:windows+x'])
     def script_debug(self, gesture):
@@ -950,4 +976,3 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             q.Show()
             
             #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(BrailleDisplaySelectionDialog))
-

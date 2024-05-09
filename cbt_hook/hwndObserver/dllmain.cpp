@@ -544,9 +544,9 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
             wPath.resize(size - 1); // get rid of null terminator
             if (data.processFilter.length() > 0) {
                 passesFilter = data.processFilter == wPath;
-                //std::string actual = CONVERTER.to_bytes(wPath);
-                //std::string pf = CONVERTER.to_bytes(data.processFilter);
-                //mylog("asdf '%s' '%s'", actual.c_str(), pf.c_str());
+                std::string actual = CONVERTER.to_bytes(wPath);
+                std::string pf = CONVERTER.to_bytes(data.processFilter);
+                mylog("asdf '%s' '%s'", actual.c_str(), pf.c_str());
             }
             sPath = CONVERTER.to_bytes(wPath);
             CloseHandle(processHandle);
