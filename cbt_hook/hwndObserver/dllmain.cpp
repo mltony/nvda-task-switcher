@@ -126,7 +126,7 @@ void from_json(const json& j, HwndCache& cache) {
     j.at("bootTime").get_to(cache.bootTime);
     j.at("hwndTimes").get_to(cache.hwndTimes);
 }
-
+/*
 struct WindowData {
     UINT32 hwnd;
     std::string executable;
@@ -151,6 +151,7 @@ struct WindowsCollection {
 };
 
 std::shared_ptr< WindowsCollection> collection;
+*/
 
 std::string toLowerCase(const std::string& str) {
     std::string result = str;
@@ -172,7 +173,7 @@ std::string getFileName(const std::string& fullPath) {
     }
     return ""; // Return an empty string if no separator is found
 }
-
+/*
 BOOL CALLBACK EnumWindowsCallback2(HWND hwnd, LPARAM lParam)
 {
     UINT32 u32Hwnd = (UINT32)hwnd;
@@ -262,6 +263,7 @@ std::string getBootTime()
     _pclose(pipe);
     return result;
 }
+*/
 
 std::string dumpCache(std::string &fileName)
 {
@@ -320,10 +322,13 @@ void cacheDumpThreadFunc(std::string fileName)
             break;
         }
         mylog("CDTF:loop");
+        /*
         std::shared_ptr<WindowsCollection> newCollection = std::make_shared<WindowsCollection>();
         newCollection->timestamp = getTimestamp();
+        */
         {
             std::lock_guard<std::mutex> guard(cacheMtx);
+            /*
             auto start = std::chrono::high_resolution_clock::now();
             EnumWindows(EnumWindowsCallback2, reinterpret_cast<LPARAM>(newCollection.get()));
             auto stop = std::chrono::high_resolution_clock::now();
@@ -334,6 +339,7 @@ void cacheDumpThreadFunc(std::string fileName)
             mylog("EnumWindows dt %d ms", dt);
             collection = newCollection;
             updateCache(newCollection->allHwnds, newCollection->timestamp);
+            */
             std::string error = dumpCache(fileName);
             if (!error.empty()) {
                 mylog("Error dumping cache: %s", error.c_str());
@@ -739,7 +745,7 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
     return TRUE;
 }
 
-json queryHwndsImplOld(json &request)
+json queryHwndsImpl(json &request)
 {
     mylog("queryHwndsImpl");
     RequestData data;
@@ -768,6 +774,7 @@ json queryHwndsImplOld(json &request)
     return response;
 }
 
+/*
 void processWindows(
     json &j,
     const std::vector< WindowData> &windows,
@@ -839,6 +846,7 @@ json queryHwndsImpl(json& request)
     return j;
 
 }
+*/
 extern "C" __declspec(dllexport) char* queryHwnds(char* request)
 {
     mylog("Request received");
