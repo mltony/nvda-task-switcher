@@ -333,7 +333,7 @@ def initHwndObserver():
     
     cacheFileName = os.path.expandvars(getConfig("observerCacheFile"))
     bootupTime = getBootupTime2()
-    #queryObserver("init", cacheFileName=cacheFileName, bootupTime=bootupTime)
+    queryObserver("init", cacheFileName=cacheFileName, bootupTime=bootupTime)
     
 def lazyInitHwndObserver():
     if observerDll is not None:
@@ -927,36 +927,37 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         #lazyInitHwndObserver()
         entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
         #ui.message(entry.name)
-        j = queryObserver("queryHwnds", process_filter=r"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.ex")
+        j = queryObserver("queryHwnds", process_filter=r"notepad++", onlyVisible=True, requestTitle=True)
         #
         api.j = j
-        n = len(j['hwnds'])
+        n = len(j['windows'])
         t1 = time.time()
         dt = int(1000*(t1-t0))
-        #ui.message(f"{n} woohoo {dt} ms")
-        user32 = ctypes.WinDLL('user32', use_last_error=True)
-        GetParent = user32.GetParent
-        GetParent.argtypes = [ctypes.c_void_p]
-        GetParent.restype = ctypes.c_void_p
-        
-        from ctypes.wintypes import HWND
-        api.j = j
-        hwndsInt = [int(x['hwnd']) for x in j['hwnds']]
-        hwnds = [HWND(int(x['hwnd'])) for x in j['hwnds']]
-        q = []
-        for hwnd in hwnds:
-            isVisible  = winUser.isWindowVisible(hwnd)
-            if not isVisible:
-                continue
-            parent_hwnd = GetParent(hwnd)
-            #log.error(f"{type(parent_hwnd)} {parent_hwnd}")
-            if parent_hwnd is not None and int(parent_hwnd) in hwndsInt:
-                continue
-            text = winUser.getWindowText(hwnd)
-            text2 = winUser.getWindowText(parent_hwnd)
-            q.append(f"'{text}' '{text2}' {parent_hwnd}")
-        api.q = q
-        tones.beep(500, 50)
+        ui.message(f"{n} woohoo {dt} ms")
+        if False:
+            user32 = ctypes.WinDLL('user32', use_last_error=True)
+            GetParent = user32.GetParent
+            GetParent.argtypes = [ctypes.c_void_p]
+            GetParent.restype = ctypes.c_void_p
+            
+            from ctypes.wintypes import HWND
+            api.j = j
+            hwndsInt = [int(x['hwnd']) for x in j['hwnds']]
+            hwnds = [HWND(int(x['hwnd'])) for x in j['hwnds']]
+            q = []
+            for hwnd in hwnds:
+                isVisible  = winUser.isWindowVisible(hwnd)
+                if not isVisible:
+                    continue
+                parent_hwnd = GetParent(hwnd)
+                #log.error(f"{type(parent_hwnd)} {parent_hwnd}")
+                if parent_hwnd is not None and int(parent_hwnd) in hwndsInt:
+                    continue
+                text = winUser.getWindowText(hwnd)
+                text2 = winUser.getWindowText(parent_hwnd)
+                q.append(f"'{text}' '{text2}' {parent_hwnd}")
+            api.q = q
+            tones.beep(500, 50)
         
         
         
