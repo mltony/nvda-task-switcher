@@ -930,10 +930,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         j = queryObserver("queryHwnds", process_filter=r"notepad++", onlyVisible=True, requestTitle=True)
         #
         api.j = j
-        n = len(j['windows'])
+        n = len(j['hwnds'])
         t1 = time.time()
         dt = int(1000*(t1-t0))
-        ui.message(f"{n} woohoo {dt} ms")
+        title = j['hwnds'][0]['title']
+        path = j['hwnds'][0]['path']
+        ui.message(f"{n} woohoo {dt} ms {title=} {path=}")
         if False:
             user32 = ctypes.WinDLL('user32', use_last_error=True)
             GetParent = user32.GetParent

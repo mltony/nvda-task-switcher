@@ -89,6 +89,8 @@ UINT64 getTimestamp()
 
 struct RequestData {
     std::wstring processFilter;
+    bool onlyVisible;
+    bool requestTitle;
     json hwnds = json::array();
     json errors = json::array();
     UINT64 timestamp;
@@ -153,25 +155,27 @@ struct WindowsCollection {
 std::shared_ptr< WindowsCollection> collection;
 */
 
-std::string toLowerCase(const std::string& str) {
-    std::string result = str;
+std::wstring toLowerCase(const std::wstring& str) {
+    std::wstring result = str;
     std::transform(result.begin(), result.end(), result.begin(),
         [](unsigned char c) { return std::tolower(c); });
     return result;
 }
 
-std::string getFileName(const std::string& fullPath) {
-    char sep = '\\';
+std::wstring getFileName(const std::wstring& fullPath) {
+    wchar_t sep = L'\\';
     size_t pos = fullPath.find_last_of(sep);
-    if (pos != std::string::npos) {
-        std::string fileName = toLowerCase(fullPath.substr(pos + 1));
-        size_t pos = fileName.rfind(".exe", 0); // Find ".exe" from the beginning of the string
-        if (pos != std::string::npos) {
+    if (pos != std::wstring::npos) {
+        std::wstring fileName = toLowerCase(fullPath.substr(pos + 1));
+        bool fff = fileName == L"notepad++.exe";
+        size_t pos = fileName.rfind(L".exe");
+        if (fff) mylog("fff %lu", (UINT32)pos);
+        if (pos != std::wstring::npos) {
             return fileName.substr(0, pos); // Return the substring without the ".exe" extension
         }
         return fileName;
     }
-    return ""; // Return an empty string if no separator is found
+    return L""; // Return an empty string if no separator is found
 }
 /*
 BOOL CALLBACK EnumWindowsCallback2(HWND hwnd, LPARAM lParam)
@@ -375,8 +379,13 @@ std::string loadCache(std::string &fileName, std::string &bootTime)
         catch (const json::parse_error& e) {
             // Do nothing - will create a blank cache
         }
-        if (loadedCache.bootTime == bootTime) {
-            mylog("bootTime match! Reusing cache.");
+        // Boot time is reported with up to second accuracy, so comparing difference
+        INT64 uBootTime = std::stoull(bootTime);
+        INT64 uCacheBootTime = std::stoull(loadedCache.bootTime);
+        INT64 uBootTimeDiff = std::abs(uBootTime - uCacheBootTime);
+        mylog("uBootTime =%lld, uCacheBootTime =%lld, uBootTimeDiff =%lld", uBootTime, uCacheBootTime, uBootTimeDiff);
+        if (uBootTimeDiff < 5) {
+            mylog("bootTime match within 5 seconds! Reusing cache.");
             hwndCache = loadedCache;
         }
         else {
@@ -401,6 +410,7 @@ std::string loadCache(std::string &fileName, std::string &bootTime)
 
 std::string terminateCache(std::string& fileName)
 {
+    cacheDumpThreadTerminateSignal = true;
     if (!SetEvent(hEvent)) {
         std::string msg = "SetEvent failed; error " + std::to_string(GetLastError());
         return msg;
@@ -623,7 +633,6 @@ json terminate(json& request)
 {
     mylog("Terminate");
     json result;
-
     mylog("Terminate: killing cbt clients");
     for (std::string arch : arches) {
         DWORD code = killCbtClient(arch);
@@ -672,52 +681,80 @@ json terminate(json& request)
     return result;
 }
 
+std::unordered_map<UINT32, std::wstring> appNameCache;
+std::unordered_map<UINT32, std::string> fullPathCache;
 BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
 {
-    // This function is no longer being used
-    if (true) {
-        throw std::runtime_error("Deprecated");
-    }
     RequestData& data = *reinterpret_cast<RequestData*>(lParam);
-    data.allHwnds.emplace((UINT32)hwnd);
-    mylog("cb hwnd=%lu", (UINT32)hwnd);
+    UINT32 uHwnd = (UINT32)hwnd;
+    bool ddd = 199080 == (UINT32)hwnd;
+    bool needCheckFileName = true;
     std::string sPath;
-    DWORD processId;
-    DWORD code = GetWindowThreadProcessId(hwnd, &processId);
-    if (code != 0) {
-        mylog("ProcessID = %lu", (UINT32)processId);
-        bool passesFilter = true;
-        HANDLE processHandle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
-        if (processHandle == nullptr) {
-            mylog("Failed to open process!");
-            data.errors.push_back(GetLastError());
-            return true;
-        }
-        else {
-            std::wstring wPath;
-            wPath.resize(MAX_BUFFER_SIZE);
-            DWORD size = GetModuleFileNameEx(processHandle, NULL, &wPath[0], MAX_BUFFER_SIZE);
-            wPath.resize(size - 1); // get rid of null terminator
-            if (data.processFilter.length() > 0) {
-                passesFilter = data.processFilter == wPath;
-                std::string actual = CONVERTER.to_bytes(wPath);
-                std::string pf = CONVERTER.to_bytes(data.processFilter);
-                mylog("asdf '%s' '%s'", actual.c_str(), pf.c_str());
-            }
-            sPath = CONVERTER.to_bytes(wPath);
-            CloseHandle(processHandle);
-        }
+    if (appNameCache.count(uHwnd) > 0) {
+        std::wstring wAppName = appNameCache[uHwnd];
+        bool passesFilter = data.processFilter == wAppName;
+        if(ddd) mylog("ggg checking '%s' result=%ul", CONVERTER.to_bytes(wAppName).c_str(), (UINT32)passesFilter);
         if (!passesFilter) {
             return true;
         }
+        sPath = fullPathCache[uHwnd];
+        needCheckFileName = false;
     }
-    else {
-        mylog("Getting processID failed!");
-        data.errors.push_back(GetLastError());
+    HWND hParent = GetParent(hwnd);
+    if (ddd)mylog("ddd %lu", (UINT32)hParent);
+    if (hParent != nullptr) {
+        // This is not a top-level window, skipping.
+        return true;
+    }    
+    BOOL isVisible = IsWindowVisible(hwnd);
+    if (ddd)mylog("ddd isVisible %lu", (UINT32)isVisible);
+    if ((data.onlyVisible) && (!isVisible)) {
+        // requested only visible windows and this one is invisible
         return true;
     }
+    data.allHwnds.emplace((UINT32)hwnd);
+    mylog("cb hwnd=%lu", (UINT32)hwnd);
+    if (needCheckFileName) {
+        DWORD processId;
+        DWORD code = GetWindowThreadProcessId(hwnd, &processId);
+        if (code != 0) {
+            mylog("ProcessID = %lu", (UINT32)processId);
+            bool passesFilter = true;
+            HANDLE processHandle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
+            if (processHandle == nullptr) {
+                mylog("Failed to open process!");
+                data.errors.push_back(GetLastError());
+                return true;
+            }
+            else {
+                std::wstring wPath;
+                wPath.resize(MAX_BUFFER_SIZE);
+                DWORD size = GetModuleFileNameEx(processHandle, NULL, &wPath[0], MAX_BUFFER_SIZE);
+                wPath.resize(size);
+                sPath = CONVERTER.to_bytes(wPath);
+                std::wstring wFileName = getFileName(wPath);
+                appNameCache[uHwnd] = wFileName;
+                fullPathCache[uHwnd] = sPath;
+                if (data.processFilter.length() > 0) {
+                    passesFilter = data.processFilter == wFileName;
+                    std::string actual = CONVERTER.to_bytes(wFileName);
+                    std::string pf = CONVERTER.to_bytes(data.processFilter);
+                    mylog("asdf '%s' '%s'", actual.c_str(), pf.c_str());
+                }
+                CloseHandle(processHandle);
+            }
+            if (!passesFilter) {
+                return true;
+            }
+        }
+        else {
+            mylog("Getting processID failed!");
+            data.errors.push_back(GetLastError());
+            return true;
+        }
+    }
     size_t length = GetWindowTextLength(hwnd);
-    code = GetLastError();
+    auto code = GetLastError();
     if ((length == 0) && (code != 0)) {
         data.errors.push_back(code);
         return true;
@@ -750,7 +787,8 @@ json queryHwndsImpl(json &request)
     mylog("queryHwndsImpl");
     RequestData data;
     data.timestamp = getTimestamp();
-    if (request.contains(REQ_PROCESS_FILTER)) {
+    data.onlyVisible = request["onlyVisible"];
+    data.requestTitle = request["requestTitle"];    if (request.contains(REQ_PROCESS_FILTER)) {
         data.processFilter = CONVERTER.from_bytes(request[REQ_PROCESS_FILTER]);
     }
     mylog("Calling EnumWindows");
