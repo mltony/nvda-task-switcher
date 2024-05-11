@@ -305,8 +305,14 @@ def queryObserver(command, **kwargs):
             raise RuntimeError(f"HWNDObserver error: {error}")
         return j
     finally:
-        #observerDll.freeBuffer(result)
+        observerDll.freeBuffer(result)
         pass
+
+def queryHwnds(appName):
+    j = queryObserver("queryHwnds", process_filter=appName, onlyVisible=True, requestTitle=True)
+    hwnds = j['hwnds']
+    hwnds.sort(key=lambda item: (item['timestamp'], item['hwnd']))
+    return hwnds
 
 def getBootupTime():
     """
@@ -737,19 +743,6 @@ class EditEntryDialog(wx.Dialog):
             evt.Skip()
 
 
-def openEntryDialog(focus=None):
-    appName = focus.appModule.appName
-    entry = TSEntry(
-        name=appName,
-        appName=appName,
-        appPath=focus.appModule.appPath,
-    )
-    dialog = EditEntryDialog(parent=None, entry=entry)
-    if dialog.ShowModal()==wx.ID_OK:
-        global globalConfig
-        globalConfig.entries.append(entry)
-        saveConfig()
-        loadConfig()
         
 class SettingsEntriesDialog(SettingsDialog):
     title = _("TaskSwitcher entries")
@@ -858,6 +851,110 @@ class SettingsEntriesDialog(SettingsDialog):
         saveConfig()
         loadConfig()
 
+def openEntryDialog(focus=None):
+    appName = focus.appModule.appName
+    entry = TSEntry(
+        name=appName,
+        appName=appName,
+        appPath=focus.appModule.appPath,
+    )
+    dialog = EditEntryDialog(parent=None, entry=entry)
+    if dialog.ShowModal()==wx.ID_OK:
+        global globalConfig
+        globalConfig.entries.append(dialog.entry)
+        saveConfig()
+        loadConfig()
+
+class ReorderWindowsDialog(
+    gui.dpiScalingHelper.DpiScalingHelperMixinWithoutInit,
+    wx.Dialog,
+):
+    def __init__(self, parent, appName):
+        title=_("Rearrange windows for %s") % appName
+        super().__init__(parent,title=title)
+        self.appName = appName
+        self.hwnds = queryHwnds(appName)
+        mainSizer=wx.BoxSizer(wx.VERTICAL)
+        sHelper = guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
+      # windows table
+        label = _("&Windows")
+        self.windowsList = sHelper.addLabeledControl(
+            label,
+            nvdaControls.AutoWidthColumnListCtrl,
+            autoSizeColumn=2,
+            itemTextCallable=self.getItemTextForList,
+            style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_VIRTUAL
+        )
+        self.windowsList.InsertColumn(0, _("Title"), width=self.scaleSize(150))
+        self.windowsList.Bind(wx.EVT_LIST_ITEM_FOCUSED, self.onListItemFocused)
+        self.windowsList.ItemCount = len(self.hwnds)
+
+        bHelper = sHelper.addItem(guiHelper.ButtonHelper(orientation=wx.HORIZONTAL))
+      # Buttons
+        self.moveUpButton = bHelper.addButton(self, label=_("Move &up"))
+        self.moveUpButton.Bind(wx.EVT_BUTTON, lambda evt: self.OnMoveClick(evt, -1))
+        self.moveDownButton = bHelper.addButton(self, label=_("Move &down"))
+        self.moveDownButton.Bind(wx.EVT_BUTTON, lambda evt: self.OnMoveClick(evt, 1))
+        self.moveTopButton = bHelper.addButton(self, label=_("Move to &top"))
+        self.moveTopButton.Bind(wx.EVT_BUTTON, lambda evt: self.OnMoveClick(evt, -1000))
+        self.moveBottomButton = bHelper.addButton(self, label=_("Move to &top"))
+        self.moveBottomButton.Bind(wx.EVT_BUTTON, lambda evt: self.OnMoveClick(evt, 1000))
+      # OK/Cancel buttons
+        sHelper.addDialogDismissButtons(self.CreateButtonSizer(wx.OK|wx.CANCEL))
+        mainSizer.Add(sHelper.sizer,border=20,flag=wx.ALL)
+        mainSizer.Fit(self)
+        self.SetSizer(mainSizer)
+        self.Bind(wx.EVT_BUTTON,self.onOk,id=wx.ID_OK)
+        self.windowsList.SetFocus()
+
+    def getItemTextForList(self, item, column):
+        hwnd = self.hwnds[item]
+        if column == 0:
+            return hwnd['title']
+        else:
+            raise ValueError("Unknown column: %d" % column)
+
+    def onListItemFocused(self, evt):
+        if self.windowsList.GetSelectedItemCount()!=1:
+            return
+        index=self.windowsList.GetFirstSelected()
+        hwnd = self.hwnds[index]
+
+    def OnMoveClick(self,evt, increment):
+        if self.windowsList.GetSelectedItemCount()!=1:
+            return
+        index=self.windowsList.GetFirstSelected()
+        if index<0:
+            return
+        newIndex = index + increment
+        newIndex = max(0, min(len(self.hwnds)-1, newIndex))
+        if index != newIndex:
+            # Swap
+            tmp = self.hwnds[index]
+            self.hwnds[index] = self.hwnds[newIndex]
+            self.hwnds[newIndex] = tmp
+            self.windowsList.Select(newIndex)
+            self.windowsList.Focus(newIndex)
+        else:
+            return
+
+    def onOk(self,evt):
+        queryObserver(
+            "updateTimestamps",
+            windows=[
+                {
+                    "hwnd": entry['hwnd'],
+                    "timestamp": i,
+                }
+                for i,entry in enumerate(self.hwnds)
+            ]
+        )
+        evt.Skip()
+
+def openReorderDialog(appName):
+    dialog = ReorderWindowsDialog(parent=None, appName=appName)
+    if dialog.ShowModal()==wx.ID_OK:
+        pass
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     scriptCategory = _("Task Switcher")
@@ -874,8 +971,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.lastKeyCounter = 0
 
     def createMenu(self):
-        gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(SettingsDialog)
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(SettingsEntriesDialog)
+        gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(SettingsDialog)
 
     def terminate(self):
         destroyHwndObserver()
@@ -901,6 +998,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             frame.Bind(
                 wx.EVT_MENU,
                 lambda evt, focus=focus: openEntryDialog(focus=focus),
+                item,
+            )
+          # reorder windows
+            appName = focus.appModule.appName
+            item = menu.Append(wx.ID_ANY, _("&Reorder %s windows") % appName)
+            frame.Bind(
+                wx.EVT_MENU,
+                lambda evt, appName=appName: openReorderDialog( appName=appName),
                 item,
             )
           # Show all entries
@@ -939,9 +1044,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             self.lastGestureCounter = 0
         self.lastKeyCounter = keyboardHandler.keyCounter
         gestureCounter = self.lastGestureCounter
-        j = queryObserver("queryHwnds", process_filter=entry.appName, onlyVisible=True, requestTitle=True)
-        hwnds = j['hwnds']
-        hwnds.sort(key=lambda item: (item['timestamp'], item['hwnd']))
+        #j = queryObserver("queryHwnds", process_filter=entry.appName, onlyVisible=True, requestTitle=True)
+        #hwnds = j['hwnds']
+        #hwnds.sort(key=lambda item: (item['timestamp'], item['hwnd']))
+        hwnds = queryHwnds(entry.appName)
         api.h = hwnds
         hwndIndex = gestureCounter % len(hwnds)
         hwnd = hwnds[hwndIndex]['hwnd']
@@ -996,7 +1102,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 api.q = q
                 tones.beep(500, 50)
 
-    @script(description="Debug", gestures=['kb:windows+x'])
+    @script(description="Debug", gestures=['kb:windows+p'])
     def script_debug(self, gesture):
         tones.beep(500, 50)
         #lazyInitHwndObserver()        
