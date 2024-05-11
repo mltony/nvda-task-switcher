@@ -348,6 +348,11 @@ def destroyHwndObserver():
 addonHandler.initTranslation()
 initConfiguration()
 
+SetActiveWindow = winUser.user32.SetActiveWindow
+SetActiveWindow.argtypes = [ctypes.c_void_p]  # HWND is a void pointer
+SetActiveWindow.restype = ctypes.c_bool  # Returns BOOL
+
+
 class SettingsDialog(SettingsPanel):
     # Translators: Title for the settings dialog
     title = _("Task Switcher")
@@ -864,6 +869,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.beeper = Beeper()
         initHwndObserver()
         loadConfig()
+        self.lastEntry = None
+        self.lastGestureCounter = 0
+        self.lastKeyCounter = 0
 
     def createMenu(self):
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(SettingsDialog)
@@ -920,49 +928,73 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         finally:
             gui.mainFrame.postPopup()
 
+    
     @script(description="Task Switcher script", gestures=['kb:Windows+z'])
     def script_taskSwitch(self, gesture):
-        t0 = time.time()
-        #tones.beep(500, 50)
-        #lazyInitHwndObserver()
         entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
-        #ui.message(entry.name)
-        j = queryObserver("queryHwnds", process_filter=r"notepad++", onlyVisible=True, requestTitle=True)
-        #
-        api.j = j
-        n = len(j['hwnds'])
-        t1 = time.time()
-        dt = int(1000*(t1-t0))
-        title = j['hwnds'][0]['title']
-        path = j['hwnds'][0]['path']
-        ui.message(f"{n} woohoo {dt} ms {title=} {path=}")
+        if entry == self.lastEntry and keyboardHandler.keyCounter == self.lastKeyCounter + 1:
+            self.lastGestureCounter += 1
+        else:
+            self.lastEntry = entry
+            self.lastGestureCounter = 0
+        self.lastKeyCounter = keyboardHandler.keyCounter
+        gestureCounter = self.lastGestureCounter
+        j = queryObserver("queryHwnds", process_filter=entry.appName, onlyVisible=True, requestTitle=True)
+        hwnds = j['hwnds']
+        hwnds.sort(key=lambda item: (item['timestamp'], item['hwnd']))
+        api.h = hwnds
+        hwndIndex = gestureCounter % len(hwnds)
+        hwnd = hwnds[hwndIndex]['hwnd']
+        api.a=hwnd
+        #winUser.setFocus(hwnd)
+        winUser.setForegroundWindow(hwnd)
+        tones.beep(500, 50)
         if False:
-            user32 = ctypes.WinDLL('user32', use_last_error=True)
-            GetParent = user32.GetParent
-            GetParent.argtypes = [ctypes.c_void_p]
-            GetParent.restype = ctypes.c_void_p
-            
-            from ctypes.wintypes import HWND
+            success =SetActiveWindow(hwnd)
+            if not success:
+                error = ctypes.GetLastError()
+                ui.message(f"Bad{error}")
+            else:
+                tones.beep(500, 50)
+        if False:
+            t0 = time.time()
+            #tones.beep(500, 50)
+            #lazyInitHwndObserver()
+            entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
+            #ui.message(entry.name)
+            j = queryObserver("queryHwnds", process_filter=r"notepad++", onlyVisible=True, requestTitle=True)
+            #
             api.j = j
-            hwndsInt = [int(x['hwnd']) for x in j['hwnds']]
-            hwnds = [HWND(int(x['hwnd'])) for x in j['hwnds']]
-            q = []
-            for hwnd in hwnds:
-                isVisible  = winUser.isWindowVisible(hwnd)
-                if not isVisible:
-                    continue
-                parent_hwnd = GetParent(hwnd)
-                #log.error(f"{type(parent_hwnd)} {parent_hwnd}")
-                if parent_hwnd is not None and int(parent_hwnd) in hwndsInt:
-                    continue
-                text = winUser.getWindowText(hwnd)
-                text2 = winUser.getWindowText(parent_hwnd)
-                q.append(f"'{text}' '{text2}' {parent_hwnd}")
-            api.q = q
-            tones.beep(500, 50)
-        
-        
-        
+            n = len(j['hwnds'])
+            t1 = time.time()
+            dt = int(1000*(t1-t0))
+            title = j['hwnds'][0]['title']
+            path = j['hwnds'][0]['path']
+            ui.message(f"{n} woohoo {dt} ms {title=} {path=}")
+            if False:
+                user32 = ctypes.WinDLL('user32', use_last_error=True)
+                GetParent = user32.GetParent
+                GetParent.argtypes = [ctypes.c_void_p]
+                GetParent.restype = ctypes.c_void_p
+                
+                from ctypes.wintypes import HWND
+                api.j = j
+                hwndsInt = [int(x['hwnd']) for x in j['hwnds']]
+                hwnds = [HWND(int(x['hwnd'])) for x in j['hwnds']]
+                q = []
+                for hwnd in hwnds:
+                    isVisible  = winUser.isWindowVisible(hwnd)
+                    if not isVisible:
+                        continue
+                    parent_hwnd = GetParent(hwnd)
+                    #log.error(f"{type(parent_hwnd)} {parent_hwnd}")
+                    if parent_hwnd is not None and int(parent_hwnd) in hwndsInt:
+                        continue
+                    text = winUser.getWindowText(hwnd)
+                    text2 = winUser.getWindowText(parent_hwnd)
+                    q.append(f"'{text}' '{text2}' {parent_hwnd}")
+                api.q = q
+                tones.beep(500, 50)
 
     @script(description="Debug", gestures=['kb:windows+x'])
     def script_debug(self, gesture):
