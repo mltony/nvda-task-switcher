@@ -661,12 +661,18 @@ class EditEntryDialog(wx.Dialog):
 
         name = self.nameTextCtrl.Value
         appName = self.appNameTextCtrl.Value
+        keystroke = self.keystroke
         if name in [e.name for i,e in enumerate(self.config.entries) if i != self.index]:
             errorMsg = _("Error: this name is already used for another entry. Please specify a unique name.")
             gui.messageBox(errorMsg, _("Task Switcher entry error"), wx.OK|wx.ICON_WARNING, self)
             self.nameTextCtrl.SetFocus()
             return
-        
+        if keystroke and keystroke in [e.keystroke for i,e in enumerate(self.config.entries) if i != self.index]:
+            errorMsg = _("Error: this keystroke is already used for another entry. Please specify a unique keystroke.")
+            gui.messageBox(errorMsg, _("Task Switcher entry error"), wx.OK|wx.ICON_WARNING, self)
+            self.customeKeystrokeButton.SetFocus()
+            return
+
         if len(appName) == 0:
             errorMsg = _("Error: application name must be specified.")
             gui.messageBox(errorMsg, _("Task Switcher entry error"), wx.OK|wx.ICON_WARNING, self)
@@ -677,32 +683,13 @@ class EditEntryDialog(wx.Dialog):
         entry = TSEntry(
             name=name,
             pattern= pattern,
-            keystroke= self.keystroke,
+            keystroke= keystroke,
             appName=appName,
             appPath=self.appPathTextCtrl.Value,
             launchCmd=self.launchCmdTextCtrl.Value,
             index=self.indexEdit .Value,
         )
         return entry
-
-    def makeNewSite(self):
-        if not self.allowSiteSelection:
-            return self.oldSite
-        newSite = self.config.sites[self.siteComboBox.control.GetSelection()]
-        if newSite != self.oldSite:
-            result = gui.messageBox(
-                _("Warning: you are about to move this bookmark to site %(new_site)s. "
-                "This bookmark will disappear from the old site %(old_site)s. Would you like to proceed?") % {"new_site": newSite.getDisplayName(), "old_site": self.oldSite.getDisplayName()},
-                _("Bookmark Entry warning"),
-                wx.YES|wx.NO|wx.ICON_WARNING,
-                self
-            )
-            if result == wx.YES:
-                return newSite
-            else:
-                self.siteComboBox.control.SetFocus()
-                return None
-        return self.oldSite
 
     def updateCustomKeystrokeButtonLabel(self):
         keystroke = self.keystroke
@@ -871,6 +858,7 @@ def openEntryDialog(focus=None):
     if dialog.ShowModal()==wx.ID_OK:
         global globalConfig
         globalConfig.entries.append(dialog.entry)
+        globalConfig.entries.sort(key=lambda e:e.name)
         saveConfig()
         loadConfig()
 
@@ -1080,8 +1068,17 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 ui.message(f"Cannot launch {entry.name} because launch command is empty!")
                 return
             p = subprocess.Popen(cmd, shell=True)
-            api.p = p
             ui.message(f"Launched {entry.name}")
+            def checkProcessHealth():
+                yield 1000
+                exitCode = p.poll()
+                if exitCode is not None:
+                    speech.cancelSpeech()
+                    if exitCode == 0:
+                        ui.message(f"Application {entry.name} has quit")
+                    else:
+                        ui.message(f"Application {entry.name} has failed with error code {exitCode}")
+            executeAsynchronously(checkProcessHealth())
             return
         elif entry.index == 0:
             hwndIndex = gestureCounter % len(hwnds)
