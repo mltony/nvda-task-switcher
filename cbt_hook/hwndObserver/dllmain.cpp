@@ -293,8 +293,8 @@ std::string dumpCache(std::string &fileName)
 
 void updateCache(std::unordered_set<UINT32>& allHwnds, UINT64 defaultTimestamp)
 {
-    // mutex must be acquired from calling function!
-    // std::lock_guard<std::mutex> guard(cacheMtx);
+    // Lock must be acquired by a calling function.
+    //std::lock_guard<std::mutex> guard(cacheMtx);
     auto& hwndTimes = hwndCache.hwndTimes;
     // 1. Drop all hwnds not found during EnumWindows run
     for (auto it = hwndTimes.begin(); it != hwndTimes.end(); /* no increment */) {
@@ -440,15 +440,19 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         //mylog("WM_CBT_ACTIVATE_MSG");
         return 0;
     case WM_CBT_CREATE_WINDOW_MSG:
-        //mylog("WM_CBT_CREATE_WINDOW_MSG");
+        mylog("WM_CBT_CREATE_WINDOW_MSG HWND=%lu t=%llu", (UINT32)(DWORD)targetHwnd, (UINT64)timestamp);
         //MessageBeep(0xFFFFFFFF);        
         {
             std::lock_guard<std::mutex> guard(cacheMtx);
             hwndCache.hwndTimes[(DWORD)targetHwnd] = timestamp;
         }
+        if (!SetEvent(hEvent)) {
+            std::string msg = "SetEvent failed; error " + std::to_string(GetLastError());
+            mylog(msg.c_str());
+        }
         return 0;
     case WM_CBT_DESTROY_WINDOW_MSG:
-        //mylog("WM_CBT_DESTROY_WINDOW_MSG");
+        mylog("WM_CBT_DESTROY_WINDOW_MSG");
         {
             std::lock_guard<std::mutex> guard(cacheMtx);
             hwndCache.hwndTimes.erase((DWORD)targetHwnd);
@@ -687,6 +691,7 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
 {
     RequestData& data = *reinterpret_cast<RequestData*>(lParam);
     UINT32 uHwnd = (UINT32)hwnd;
+    data.allHwnds.emplace(uHwnd);
     bool ddd = 199080 == (UINT32)hwnd;
     bool needCheckFileName = true;
     std::string sPath;
@@ -712,7 +717,6 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
         // requested only visible windows and this one is invisible
         return true;
     }
-    data.allHwnds.emplace((UINT32)hwnd);
     mylog("cb hwnd=%lu", (UINT32)hwnd);
     if (needCheckFileName) {
         DWORD processId;
@@ -885,6 +889,23 @@ json queryHwndsImpl(json& request)
 
 }
 */
+
+
+json updateTimestamps(json& request)
+{
+    std::lock_guard<std::mutex> guard(cacheMtx);
+    for (const auto& window : request["windows"]) {
+        UINT32 hwnd = window["hwnd"];
+        UINT64 timestamp = window["timestamp"];
+        hwndCache.hwndTimes[hwnd] = timestamp;
+    }    
+    if (!SetEvent(hEvent)) {
+        std::string msg = "SetEvent failed; error " + std::to_string(GetLastError());
+        return json({ {"error", msg}});
+    }
+    return json({});
+}
+
 extern "C" __declspec(dllexport) char* queryHwnds(char* request)
 {
     mylog("Request received");
@@ -911,6 +932,9 @@ extern "C" __declspec(dllexport) char* queryHwnds(char* request)
     }
     else if (command == "terminate") {
         responseJson = terminate(requestJson);
+    }
+    else if (command == "updateTimestamps") {
+        responseJson = updateTimestamps(requestJson);
     }
     else {
         responseJson = { {"error", "Unknown command"}};

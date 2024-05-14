@@ -134,6 +134,7 @@ class TSEntry:
     name: str
     appName: str
     appPath: Optional[str] = ""
+    launchCmd: Optional[str] = ""
     keystroke: Optional[str] = None
     pattern: Optional[str] = ""
     index: int = 0
@@ -617,6 +618,10 @@ class EditEntryDialog(wx.Dialog):
         label = _("&Application full path to executable (optional)")
         self.appPathTextCtrl=sHelper.addLabeledControl(label, wx.TextCtrl)
         self.appPathTextCtrl.SetValue(self.entry.appPath)
+      # LaunchCMD editable
+        label = _("&Launch command (optional)")
+        self.launchCmdTextCtrl=sHelper.addLabeledControl(label, wx.TextCtrl)
+        self.launchCmdTextCtrl.SetValue(self.entry.launchCmd)
       # Translators: Window Title pattern
         label = _("Window &title regex pattern (optional):")
         self.patternTextCtrl=sHelper.addLabeledControl(label, wx.TextCtrl)
@@ -675,6 +680,7 @@ class EditEntryDialog(wx.Dialog):
             keystroke= self.keystroke,
             appName=appName,
             appPath=self.appPathTextCtrl.Value,
+            launchCmd=self.launchCmdTextCtrl.Value,
             index=self.indexEdit .Value,
         )
         return entry
@@ -853,10 +859,13 @@ class SettingsEntriesDialog(SettingsDialog):
 
 def openEntryDialog(focus=None):
     appName = focus.appModule.appName
+    appPath = focus.appModule.appPath
     entry = TSEntry(
         name=appName,
         appName=appName,
-        appPath=focus.appModule.appPath,
+        appPath=appPath,
+        launchCmd=f'"{focus.appModule.appPath}"',
+        index=0,
     )
     dialog = EditEntryDialog(parent=None, entry=entry)
     if dialog.ShowModal()==wx.ID_OK:
@@ -1048,8 +1057,36 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         #hwnds = j['hwnds']
         #hwnds.sort(key=lambda item: (item['timestamp'], item['hwnd']))
         hwnds = queryHwnds(entry.appName)
+        if entry.appPath:
+            hwnds = [
+                hwnd
+                for hwnd in hwnds
+                if hwnd['path'].lower() == entry.appPath.lower()
+            ]
+        if entry.pattern:
+            regex = re.compile(entry.pattern)
+            hwnds = [
+                hwnd
+                for hwnd in hwnds
+                if regex.search(hwnd['title']) is not None
+            ]
+
         api.h = hwnds
-        hwndIndex = gestureCounter % len(hwnds)
+        n = len(hwnds)
+        if n == 0 or entry.index > n:
+            # Launch app
+            cmd = entry.launchCmd
+            if not cmd:
+                ui.message(f"Cannot launch {entry.name} because launch command is empty!")
+                return
+            p = subprocess.Popen(cmd, shell=True)
+            api.p = p
+            ui.message(f"Launched {entry.name}")
+            return
+        elif entry.index == 0:
+            hwndIndex = gestureCounter % len(hwnds)
+        else:
+            hwndIndex = entry.index - 1
         hwnd = hwnds[hwndIndex]['hwnd']
         api.a=hwnd
         #winUser.setFocus(hwnd)
