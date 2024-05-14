@@ -14,7 +14,7 @@ import controlTypes
 import core
 import copy
 import ctypes
-from ctypes import create_string_buffer, byref
+from ctypes import create_string_buffer, byref, wintypes
 import cursorManager
 import documentBase
 import eventHandler
@@ -128,6 +128,47 @@ def getConfig(key):
 def setConfig(key, value):
     config.conf[module][key] = value
 
+
+class RECT(ctypes.Structure):
+    _fields_ = [("Left", wintypes.INT),
+                ("Top", wintypes.INT),
+                ("Right", wintypes.INT),
+                ("Bottom", wintypes.INT)]
+
+class WINDOWPLACEMENT(ctypes.Structure):
+    _fields_ = [("Length", wintypes.UINT),
+                ("Width", wintypes.UINT),
+                ("ShowCmd", wintypes.UINT),
+                ("MinRestore", RECT),
+                ("MaxRestore", RECT),
+                ("Frame", RECT),
+                ("ShowCmd", wintypes.UINT)]
+
+GetWindowPlacement = ctypes.windll.user32.GetWindowPlacement
+
+def is_window_maximized(hwnd):
+    # Initialize the WINDOWPLACEMENT structure
+    placement = WINDOWPLACEMENT()
+    placement.Length = ctypes.sizeof(WINDOWPLACEMENT)
+    
+    # Call GetWindowPlacement
+    result = GetWindowPlacement(hwnd, ctypes.byref(placement))
+    
+    # Check if the call was successful
+    if result!= 0:
+        # If the window is maximized, ShowCmd will be SW_SHOWMAXIMIZED
+        api.c = placement.ShowCmd
+        return placement.ShowCmd == 9
+    else:
+        raise RuntimeError
+
+def getTopLevelWindow(obj):
+    if obj.simpleParent is None:
+        return obj
+    desktop = api.getDesktopObject()
+    while obj.simpleParent != desktop:
+        obj = obj.simpleParent
+    return obj
 
 @dataclass
 class TSEntry:
@@ -1088,6 +1129,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         api.a=hwnd
         #winUser.setFocus(hwnd)
         winUser.setForegroundWindow(hwnd)
+        if True: #maximize
+            ShowWindow = ctypes.windll.user32.ShowWindow
+            
+            #mx = is_window_maximized(hwnd)
+            def f():
+                #ui.message(f"mx {mx}")
+                ShowWindow(hwnd, 6)  # 6 corresponds to SW_MAXIMIZE
+                tones.beep(500, 50)
+            #core.callLater(1000, f)
         tones.beep(500, 50)
         if False:
             success =SetActiveWindow(hwnd)
@@ -1138,8 +1188,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
     @script(description="Debug", gestures=['kb:windows+p'])
     def script_debug(self, gesture):
-        tones.beep(500, 50)
-        #lazyInitHwndObserver()        
+        focus =  api.getFocusObject()
+        topWindow = getTopLevelWindow(focus)
+        api.t = topWindow
+        hwnd = topWindow.windowHandle
+        mx = is_window_maximized(hwnd)
+        ui.message(f"mx {mx}")
+        #tones.beep(500, 50)
+        
         if False:
             pass
             #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(SettingsEntriesDialog))
