@@ -363,11 +363,15 @@ std::string loadCache(std::string &fileName, std::string &bootTime)
         return "Retrieved boot time is empty"; 
     }
     mylog("Loading cache from %s", fileName.c_str());
-    std::ifstream fin(fileName.c_str(), std::ios::binary);
+    std::ifstream fin(fileName, std::ios::binary);
     bool fileExists = fin.good();
     if (!fileExists) {
         mylog("Cache file not found - creating a blank cache.");
         hwndCache = HwndCache();
+        std::ofstream fout(fileName, std::ios::out | std::ios::binary);
+        if (!fout.is_open()) {
+            return "Cannot create cache file " + fileName;
+        }
     }
     else {
         json j;

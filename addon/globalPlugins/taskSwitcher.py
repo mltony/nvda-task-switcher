@@ -100,24 +100,9 @@ def myAssert(condition):
 
 module = "taskSwitcher"
 def initConfiguration():
-    defaultBulkyRegexp = r'$|(^|(?<=[\s\(\)]))[^\s\(\)]|\b(:\d+)+\b'
     confspec = {
-        "overrideMoveByWord" : "boolean( default=True)",
-        "enableInBrowseMode" : "boolean( default=True)",
-        "enableSelection" : "boolean( default=True)",
-        "selectTrailingSpace" : "boolean( default=False)",
-        "leftControlAssignmentIndex": "integer( default=3, min=0, max=5)",
-        "rightControlAssignmentIndex": "integer( default=1, min=0, max=5)",
-        "leftControlWindowsAssignmentIndex": "integer( default=2, min=0, max=5)",
-        "rightControlWindowsAssignmentIndex": "integer( default=4, min=0, max=5)",
-        "bulkyWordPunctuation" : f"string( default='():')",
-        "bulkyWordRegex" : f"string( default='{defaultBulkyRegexp}')",
-        "bulkyWordEndRegex" : f"string( default='')",
-        "paragraphChimeVolume" : "integer( default=5, min=0, max=100)",
-        "wordCount": "integer( default=5, min=1, max=1000)",
-        "applicationsBlacklist" : f"string( default='')",
-        "disableInGoogleDocs" : "boolean( default=False)",
         "observerCacheFile" : "string( default='%TMP%\\NVDATaskSwitcherObserverCache.json')",
+        "autoMaximize" : "boolean( default=True)",
     }
     config.conf.spec[module] = confspec
 
@@ -127,11 +112,21 @@ def getConfig(key):
 
 def setConfig(key, value):
     config.conf[module][key] = value
-
+WM_SYSCOMMAND = 0x0112
+SC_MAXIMIZE = 0xF030
+SC_MINIMIZE = 0xF020
+SC_RESTORE= 0xF120
 def maximizeWindow(hwnd):
-    WM_SYSCOMMAND = 0x0112
-    SC_MAXIMIZE = 0xF030
     watchdog.cancellableSendMessage(hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0)
+
+
+def minimizeWindow(hwnd):
+    watchdog.cancellableSendMessage(hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0)
+
+
+def restoreWindow(hwnd):
+    watchdog.cancellableSendMessage(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0)
+
 def getTopLevelWindow(obj):
     if obj.simpleParent is None:
         return obj
@@ -139,6 +134,7 @@ def getTopLevelWindow(obj):
     while obj.simpleParent != desktop:
         obj = obj.simpleParent
     return obj
+
 
 @dataclass
 class TSEntry:
@@ -374,113 +370,21 @@ SetActiveWindow.restype = ctypes.c_bool  # Returns BOOL
 class SettingsDialog(SettingsPanel):
     # Translators: Title for the settings dialog
     title = _("Task Switcher")
-    controlAssignmentText = [
-        _("Default NVDA word navigation (WordNav disabled)"),
-        _("Notepad++ style navigation"),
-        _("Bulky word navigation"),
-        _("Fine word navigation - good for programming"),
-        _("MultiWord navigation - reads multiple words at once"),
-        _("Custom regular expression word navigation"),
-    ]
-    controlWindowsAssignmentText = [
-        _("Unassigned"),
-    ] + controlAssignmentText[1:]
 
     def makeSettings(self, settingsSizer):
         sHelper = gui.guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
-      # checkbox override move by word
-        # Translators: Checkbox for override move by word
-        label = _("Enable WordNav in editables")
-        self.overrideMoveByWordCheckbox = sHelper.addItem(wx.CheckBox(self, label=label))
-        self.overrideMoveByWordCheckbox.Value = getConfig("overrideMoveByWord")
-      # checkbox enableInBrowseMode
-        # Translators: Checkbox for enableInBrowseMode
-        label = _("Enable WordNav in browse mode.")
-        self.enableInBrowseModeCheckbox = sHelper.addItem(wx.CheckBox(self, label=label))
-        self.enableInBrowseModeCheckbox.Value = getConfig("enableInBrowseMode")
-      # checkbox enableSelection
-        label = _("Enable WordNav word selection")
-        self.enableSelectionCheckbox = sHelper.addItem(wx.CheckBox(self, label=label))
-        self.enableSelectionCheckbox.Value = getConfig("enableSelection")
-      # checkbox select trailing space
-        label = _("Include trailing space when selecting words with control+shift+rightArrow")
-        self.selectTrailingSpaceCheckbox = sHelper.addItem(wx.CheckBox(self, label=label))
-        self.selectTrailingSpaceCheckbox.Value = getConfig("selectTrailingSpace")
-      # left control assignment Combo box
-        # Translators: Label for left control assignment combo box
-        label = _("Left control behavior:")
-        self.leftControlAssignmentCombobox = sHelper.addLabeledControl(label, wx.Choice, choices=self.controlAssignmentText)
-        self.leftControlAssignmentCombobox.Selection = getConfig("leftControlAssignmentIndex")
-      # right control assignment Combo box
-        # Translators: Label for right control assignment combo box
-        label = _("Right control behavior:")
-        self.rightControlAssignmentCombobox = sHelper.addLabeledControl(label, wx.Choice, choices=self.controlAssignmentText)
-        self.rightControlAssignmentCombobox.Selection = getConfig("rightControlAssignmentIndex")
-      # Left Control+Windows assignment Combo box
-        # Translators: Label for control+windows assignment combo box
-        label = _("Left Control+Windows behavior:")
-        self.leftControlWindowsAssignmentCombobox = sHelper.addLabeledControl(label, wx.Choice, choices=self.controlWindowsAssignmentText)
-        self.leftControlWindowsAssignmentCombobox.Selection = getConfig("leftControlWindowsAssignmentIndex")
+      # checkbox auto maximize
+        label = _("Automatically maximize target window")
+        self.AutoMaxCheckbox = sHelper.addItem(wx.CheckBox(self, label=label))
+        self.AutoMaxCheckbox.Value = getConfig("autoMaximize")
+      # Edit cache file
+        self.cacheFileEdit = sHelper.addLabeledControl(_("Cache file location (requires restart)"), wx.TextCtrl)
+        self.cacheFileEdit.Value = getConfig("observerCacheFile")
 
-      # Right Control+Windows assignment Combo box
-        # Translators: Label for control+windows assignment combo box
-        label = _("Right Control+Windows behavior:")
-        self.rightControlWindowsAssignmentCombobox = sHelper.addLabeledControl(label, wx.Choice, choices=self.controlWindowsAssignmentText)
-        self.rightControlWindowsAssignmentCombobox.Selection = getConfig("rightControlWindowsAssignmentIndex")
-      # bulkyWordPunctuation
-        # Translators: Label for bulkyWordPunctuation edit box
-        self.bulkyWordPunctuationEdit = sHelper.addLabeledControl(_("Bulky word separators:"), wx.TextCtrl)
-        self.bulkyWordPunctuationEdit.Value = getConfig("bulkyWordPunctuation")
-
-      # Custom word regex
-        self.customWordRegexEdit = sHelper.addLabeledControl(_("Custom word regular expression:"), wx.TextCtrl)
-        self.customWordRegexEdit.Value = getConfig("bulkyWordRegex")
-      # Custom word end regex
-        self.customWordEndRegexEdit = sHelper.addLabeledControl(_("Optional Custom word end regular expression for word selection:"), wx.TextCtrl)
-        self.customWordEndRegexEdit.Value = getConfig("bulkyWordEndRegex")
-      # MultiWord word count
-        # Translators: Label for multiWord wordCount edit box
-        self.wordCountEdit = sHelper.addLabeledControl(_("Word count for multiWord navigation:"), wx.TextCtrl)
-        self.wordCountEdit.Value = str(getConfig("wordCount"))
-      # paragraphChimeVolumeSlider
-        # Translators: Paragraph crossing chime volume
-        label = _("Volume of chime when crossing paragraph border")
-        self.paragraphChimeVolumeSlider = sHelper.addLabeledControl(label, wx.Slider, minValue=0,maxValue=100)
-        self.paragraphChimeVolumeSlider.SetValue(getConfig("paragraphChimeVolume"))
-
-      # applicationsBlacklist edit
-        # Translators: Label for blacklisted applications edit box
-        self.applicationsBlacklistEdit = sHelper.addLabeledControl(_("Disable WordNav in applications (comma-separated list)"), wx.TextCtrl)
-        self.applicationsBlacklistEdit.Value = getConfig("applicationsBlacklist")
-      # checkbox Disable in Google Docs
-        label = _("Disable in Google Docs")
-        self.DisableInGoogleDocsCheckbox = sHelper.addItem(wx.CheckBox(self, label=label))
-        self.DisableInGoogleDocsCheckbox.Value = getConfig("disableInGoogleDocs")
 
     def onSave(self):
-        try:
-            if int(self.wordCountEdit.Value) <= 1:
-                raise Exception()
-        except:
-            self.wordCountEdit.SetFocus()
-            ui.message(_("WordCount must be a positive integer greater than 2."))
-            return
-        setConfig("overrideMoveByWord", self.overrideMoveByWordCheckbox.Value)
-        setConfig("enableInBrowseMode", self.enableInBrowseModeCheckbox.Value)
-        setConfig("enableSelection", self.enableSelectionCheckbox.Value)
-        setConfig("selectTrailingSpace", self.selectTrailingSpaceCheckbox.Value)
-        setConfig("leftControlAssignmentIndex", self.leftControlAssignmentCombobox.Selection)
-        setConfig("rightControlAssignmentIndex", self.rightControlAssignmentCombobox.Selection)
-        setConfig("leftControlWindowsAssignmentIndex", self.leftControlWindowsAssignmentCombobox.Selection)
-        setConfig("rightControlWindowsAssignmentIndex", self.rightControlWindowsAssignmentCombobox.Selection)
-        setConfig("bulkyWordPunctuation", self.bulkyWordPunctuationEdit.Value)
-        setConfig("bulkyWordRegex", self.customWordRegexEdit.Value)
-        setConfig("bulkyWordEndRegex", self.customWordEndRegexEdit.Value)
-        setConfig("wordCount", int(self.wordCountEdit.Value))
-        setConfig("paragraphChimeVolume", self.paragraphChimeVolumeSlider.Value)
-        setConfig("applicationsBlacklist", self.applicationsBlacklistEdit.Value)
-        setConfig("disableInGoogleDocs", self.DisableInGoogleDocsCheckbox.Value)
-
+        setConfig("autoMaximize", self.AutoMaxCheckbox.Value)
+        setConfig("observerCacheFile", self.cacheFileEdit.Value)
 
 
 class Beeper:
@@ -1097,10 +1001,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             hwndIndex = entry.index - 1
         hwnd = hwnds[hwndIndex]['hwnd']
         isMaximized = hwnds[hwndIndex]['isMaximized']
-        api.a=hwnd
-        #winUser.setFocus(hwnd)
         winUser.setForegroundWindow(hwnd)
-        if  not isMaximized:
+        winUser.setFocus(hwnd)
+        autoMaximize = getConfig("autoMaximize")
+        if  autoMaximize and not isMaximized:
             maximizeWindow(hwnd)
         if  False: #not isMaximized:
             ShowWindow = ctypes.windll.user32.ShowWindow
