@@ -103,6 +103,7 @@ def initConfiguration():
     confspec = {
         "observerCacheFile" : "string( default='%TMP%\\NVDATaskSwitcherObserverCache.json')",
         "autoMaximize" : "boolean( default=True)",
+        "clickVolume" : "integer( default=50, min=0, max=100)",
     }
     config.conf.spec[module] = confspec
 
@@ -377,6 +378,10 @@ class SettingsDialog(SettingsPanel):
         label = _("Automatically maximize target window")
         self.AutoMaxCheckbox = sHelper.addItem(wx.CheckBox(self, label=label))
         self.AutoMaxCheckbox.Value = getConfig("autoMaximize")
+      # click volume slider
+        label = _("Volume of click")
+        self.clickVolumeSlider = sHelper.addLabeledControl(label, wx.Slider, minValue=0,maxValue=100)
+        self.clickVolumeSlider.SetValue(getConfig("clickVolume"))
       # Edit cache file
         self.cacheFileEdit = sHelper.addLabeledControl(_("Cache file location (requires restart)"), wx.TextCtrl)
         self.cacheFileEdit.Value = getConfig("observerCacheFile")
@@ -384,6 +389,7 @@ class SettingsDialog(SettingsPanel):
 
     def onSave(self):
         setConfig("autoMaximize", self.AutoMaxCheckbox.Value)
+        setConfig("clickVolume", self.clickVolumeSlider.Value)
         setConfig("observerCacheFile", self.cacheFileEdit.Value)
 
 
@@ -901,6 +907,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     @script(description="Show task switcher op-up menu", gestures=['kb:nvda+control+f12'])
     def script_taskSwitcherPopupMenu(self, gesture):
         focus = api.getFocusObject()
+        fg = api.getForegroundObject()
         gui.mainFrame.prePopup()
         try:
             frame = wx.Frame(None, -1,"Fake popup frame", pos=(1, 1),size=(1, 1))
@@ -912,6 +919,22 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 lambda evt, focus=focus: openEntryDialog(focus=focus),
                 item,
             )
+          # hide this window
+            item = menu.Append(wx.ID_ANY, _("&Hide this window"))
+            frame.Bind(
+                wx.EVT_MENU,
+                lambda evt, fg=fg: self.script_HideWindow(None, fg),
+                item,
+            )
+          # Show hidden windows
+            item = menu.Append(wx.ID_ANY, _("&Show hidden windows"))
+            frame.Bind(
+                wx.EVT_MENU,
+                lambda evt: self.script_showWindows(None),
+                item,
+            )
+            if len(self.hiddenWindows) == 0:
+                item.Enable(False)
           # reorder windows
             appName = focus.appModule.appName
             item = menu.Append(wx.ID_ANY, _("&Reorder %s windows") % appName)
@@ -1006,84 +1029,36 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         autoMaximize = getConfig("autoMaximize")
         if  autoMaximize and not isMaximized:
             maximizeWindow(hwnd)
-        if  False: #not isMaximized:
-            ShowWindow = ctypes.windll.user32.ShowWindow
-            #mx = is_window_maximized(hwnd)
-            def f():
-                #ui.message(f"mx {mx}")
-                #ShowWindow(hwnd, 6)  # 6 corresponds to SW_MAXIMIZE
-                WM_SYSCOMMAND = 0x0112
-                SC_MAXIMIZE = 0xF030
-                import watchdog
-                watchdog.cancellableSendMessage(hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0)
-                tones.beep(500, 50)
-            core.callLater(1000, f)
-        tones.beep(500, 50)
-        if False:
-            success =SetActiveWindow(hwnd)
-            if not success:
-                error = ctypes.GetLastError()
-                ui.message(f"Bad{error}")
-            else:
-                tones.beep(500, 50)
-        if False:
-            t0 = time.time()
-            #tones.beep(500, 50)
-            #lazyInitHwndObserver()
-            entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
-            #ui.message(entry.name)
-            j = queryObserver("queryHwnds", process_filter=r"notepad++", onlyVisible=True, requestTitle=True)
-            #
-            api.j = j
-            n = len(j['hwnds'])
-            t1 = time.time()
-            dt = int(1000*(t1-t0))
-            title = j['hwnds'][0]['title']
-            path = j['hwnds'][0]['path']
-            ui.message(f"{n} woohoo {dt} ms {title=} {path=}")
-            if False:
-                user32 = ctypes.WinDLL('user32', use_last_error=True)
-                GetParent = user32.GetParent
-                GetParent.argtypes = [ctypes.c_void_p]
-                GetParent.restype = ctypes.c_void_p
-                
-                from ctypes.wintypes import HWND
-                api.j = j
-                hwndsInt = [int(x['hwnd']) for x in j['hwnds']]
-                hwnds = [HWND(int(x['hwnd'])) for x in j['hwnds']]
-                q = []
-                for hwnd in hwnds:
-                    isVisible  = winUser.isWindowVisible(hwnd)
-                    if not isVisible:
-                        continue
-                    parent_hwnd = GetParent(hwnd)
-                    #log.error(f"{type(parent_hwnd)} {parent_hwnd}")
-                    if parent_hwnd is not None and int(parent_hwnd) in hwndsInt:
-                        continue
-                    text = winUser.getWindowText(hwnd)
-                    text2 = winUser.getWindowText(parent_hwnd)
-                    q.append(f"'{text}' '{text2}' {parent_hwnd}")
-                api.q = q
-                tones.beep(500, 50)
+        volume = getConfig("clickVolume")
+        tones.beep(100, 20, left=volume, right=volume)
 
-    @script(description="Debug", gestures=['kb:windows+p'])
-    def script_debug(self, gesture):
-        focus =  api.getFocusObject()
-        topWindow = getTopLevelWindow(focus)
-        api.t = topWindow
-        hwnd = topWindow.windowHandle
-        mx = is_window_maximized(hwnd)
-        ui.message(f"mx {mx}")
-        #tones.beep(500, 50)
-        
-        if False:
-            pass
-            #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(SettingsEntriesDialog))
-            #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(QQQBrailleDisplaySelectionDialog))
-            #initHwndObserver()
-            #gui.mainFrame._popupSettingsDialog(QQQBrailleDisplaySelectionDialog)
-            from gui.settingsDialogs import BrailleDisplaySelectionDialog
-            q = QQQBrailleDisplaySelectionDialog(parent=gui.mainFrame)
-            q.Show()
-            
-            #wx.CallAfter(lambda: gui.mainFrame._popupSettingsDialog(BrailleDisplaySelectionDialog))
+    hiddenWindows = []
+    @script(description=_("Hide current window."), gestures=['kb:NVDA+Shift+-'])
+    def script_HideWindow(self, gesture, fg=None):
+        fg = fg or api.getForegroundObject()
+        handle = fg.windowHandle
+        self.hiddenWindows.append(handle)
+        winUser.user32.ShowWindow(handle, winUser.SW_HIDE)
+        keyboardHandler.KeyboardInputGesture.fromName("Alt+Tab").send()
+        #winUser.setForegroundWindow(api.getDesktopObject().windowHandle)
+        def delayedSpeak():
+            speech.cancelSpeech()
+            ui.message(_("Hid current window. Now there are %d windows hidden.") % len(self.hiddenWindows))
+        core.callLater(100, delayedSpeak)
+
+    @script(description=_("Show hidden windows."), gestures=['kb:NVDA+Shift+='])
+    def script_showWindows(self, gesture):
+        if len(self.hiddenWindows) == 0:
+            ui.message(_("No windows hidden or all hidden windows have been already shown."))
+            return
+        n = len(self.hiddenWindows)
+        for handle in self.hiddenWindows:
+            time.sleep(0.1)
+            SW_SHOW = 5
+            winUser.user32.ShowWindow(handle, SW_SHOW)
+        winUser.setForegroundWindow(self.hiddenWindows[-1])
+        def delayedSpeak():
+            speech.cancelSpeech()
+            ui.message(_("%d windows shown") % n)
+        core.callLater(100, delayedSpeak)
+        self.hiddenWindows = []
