@@ -685,6 +685,23 @@ json terminate(json& request)
     return result;
 }
 
+bool IsWindowMaximized(HWND hWnd) {
+    WINDOWPLACEMENT placement;
+    placement.length = sizeof(WINDOWPLACEMENT);
+
+    // Get the current window placement
+    BOOL result = GetWindowPlacement(hWnd, &placement);
+
+    // Check if the call was successful
+    if (result == FALSE) {
+        std::cerr << "Failed to get window placement." << std::endl;
+        return false; // Or handle error appropriately
+    }
+
+    // A window is considered maximized if its showCmd is SW_SHOWMAXIMIZED
+    return placement.showCmd == SW_SHOWMAXIMIZED;
+}
+
 std::unordered_map<UINT32, std::wstring> appNameCache;
 std::unordered_map<UINT32, std::string> fullPathCache;
 BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
@@ -777,11 +794,13 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
     if (hwndCache.hwndTimes.count((UINT32)hwnd) > 0) {
         timestamp = hwndCache.hwndTimes[(DWORD)hwnd];
     }
+    bool isMaximized = IsWindowMaximized(hwnd);
     data.hwnds.push_back({
         {"hwnd", (UINT32)hwnd},
         {"path", sPath},
         {"title", sTitle},
         {"timestamp", timestamp},
+        {"isMaximized", isMaximized},
     });
     return TRUE;
 }
