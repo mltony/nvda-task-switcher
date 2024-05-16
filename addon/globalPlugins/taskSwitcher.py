@@ -877,7 +877,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             frame = wx.Frame(None, -1,"Fake popup frame", pos=(1, 1),size=(1, 1))
             menu = wx.Menu()
           # Create new entry
-            item = menu.Append(wx.ID_ANY, _("&Create new entry for this application"))
+            item = menu.Append(wx.ID_ANY, _("&Create a new entry for this application"))
             frame.Bind(
                 wx.EVT_MENU,
                 lambda evt, focus=focus: openEntryDialog(focus=focus),
