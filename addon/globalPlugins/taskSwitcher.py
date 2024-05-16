@@ -174,23 +174,6 @@ def poorManDecode(dct):
         entries = [poorManDecode(entryDct) for entryDct in dct['entries']]
         return TSConfig(entries=entries)
     return dct
-def old_dataclassToDict(dataclass_instance):
-    if hasattr(dataclass_instance, '__dict__'):
-        return dataclass_instance.__dict__
-    if isinstance(dataclass_instance, list):
-        return [dataclassToDict(item) for item in dataclass_instance]
-    if isinstance(dataclass_instance, tuple):
-        return tuple(dataclassToDict(item) for item in dataclass_instance)
-    if isinstance(dataclass_instance, dict):
-        return {key: dataclassToDict(value) for key, value in dataclass_instance.items()}
-    return dataclass_instance
-
-def old_dictToDataclass(cls, dct):
-    if isinstance(dct, dict):
-        return cls(**{key: dictToDataclass(value, dct[key]) for key, value in dct.items()})
-    if isinstance(dct, list):
-        return [dictToDataclass(cls, item) for item in dct]
-    return dct
 
 
 configFileName = os.path.join(globalVars.appArgs.configPath, "taskSwitcherConfig.json")
@@ -206,38 +189,19 @@ def getGlobalPluginInstance():
     raise RuntimeError("Woot!")
 
 def updateKeystrokes():
-    if False:
-        cls = GlobalPlugin
-        gestures = getattr(cls, f"_{cls.__name__}__gestures")
-        QF = "taskSwitch"
-        gestures = {
-            keystroke: script
-            for keystroke, script in gestures.items()
-            if script != QF
-        }
-        gestures = {
-            **gestures,
-            **{
-                keyboardHandler.KeyboardInputGesture.fromName(entry.keystroke).identifiers[-1]: QF
-                for entry in globalConfig.entries
-                if entry.keystroke
-            },
-        }
-        setattr(cls, f"_{cls.__name__}__gestures", gestures)
-    if True:
-        gp = getGlobalPluginInstance()
-        gp._gestureMap = {
-            **{
-                keystroke: func
-                for keystroke, func in gp._gestureMap.items()
-                if func != GlobalPlugin.script_taskSwitch
-            },
-            **{
-                keyboardHandler.KeyboardInputGesture.fromName(entry.keystroke).normalizedIdentifiers[-1]: GlobalPlugin.script_taskSwitch
-                for entry in globalConfig.entries
-                if entry.keystroke
-            },
-        }
+    gp = getGlobalPluginInstance()
+    gp._gestureMap = {
+        **{
+            keystroke: func
+            for keystroke, func in gp._gestureMap.items()
+            if func != GlobalPlugin.script_taskSwitch
+        },
+        **{
+            keyboardHandler.KeyboardInputGesture.fromName(entry.keystroke).normalizedIdentifiers[-1]: GlobalPlugin.script_taskSwitch
+            for entry in globalConfig.entries
+            if entry.keystroke
+        },
+    }
     
     global globalGesturesToEntries
     globalGesturesToEntries = {
@@ -308,14 +272,12 @@ def queryObserver(command, **kwargs):
         response_wchar_p = c_char_p(result)
         response_str = response_wchar_p.value
         j = json.loads(response_str.decode('utf-8'))
-        #log.error(f"asdf {json.dumps(j, indent=4)}")
         if "error" in j and len(j['error']) > 0:
             error = j['error']
             raise RuntimeError(f"HWNDObserver error: {error}")
         return j
     finally:
         observerDll.freeBuffer(result)
-        pass
 
 def queryHwnds(appName):
     j = queryObserver("queryHwnds", process_filter=appName, onlyVisible=True, requestTitle=True)
@@ -329,6 +291,7 @@ def getBootupTime():
         Traceback (most recent call last):
         _ctypes.COMError: (-2147418094, 'The callee (server [not server application]) is not available and disappeared; all connections are invalid. The call did not execute.', (None, None, None, 0, None))
     """
+    raise RuntimeError("Don't use this function")
     result = subprocess.run(['wmic', 'os', 'get', 'lastbootuptime'], capture_output=True, text=True)
     output = result.stdout.strip()
     return output.splitlines()[2]
@@ -349,17 +312,12 @@ def initHwndObserver():
     cacheFileName = os.path.expandvars(getConfig("observerCacheFile"))
     bootupTime = getBootupTime2()
     queryObserver("init", cacheFileName=cacheFileName, bootupTime=bootupTime)
-    
-def lazyInitHwndObserver():
-    if observerDll is not None:
-        return
-    initHwndObserver()
-
 
 def destroyHwndObserver():
     queryObserver("terminate")
     global observerDll
     observerDll = None
+
 addonHandler.initTranslation()
 initConfiguration()
 
@@ -641,8 +599,6 @@ class EditEntryDialog(wx.Dialog):
             msg = _("Keystroke deleted and entry is disable until you select another keystroke")
         elif g  in self.blackListedKeystrokes:
             msg = _("Invalid keystroke %s: cannot overload essential  NVDA keystrokes!") % g
-        elif False and 'shift+' in g:
-            msg = _("Invalid keystroke %s: Cannot use keystrokes with shift modifier for quickJump bookmarks!") % g
         else:
             self.keystroke = g
             msg = None
@@ -657,7 +613,6 @@ class EditEntryDialog(wx.Dialog):
             evt.Skip()
 
 
-        
 class SettingsEntriesDialog(SettingsDialog):
     title = _("TaskSwitcher entries")
 
@@ -977,7 +932,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 item,
             )
           # Show all entries
-            # this piece of shit doesn't work
+            # For some reason the window won't show up
             if False:
                 item = menu.Append(wx.ID_ANY, _("&Show all entries"))
                 try:
@@ -1041,7 +996,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         executeAsynchronously(checkProcessHealth())
         return
 
-    
     @script(description="Task Switcher script", gestures=['kb:Windows+z'])
     def script_taskSwitch(self, gesture):
         toneHz = 100
@@ -1071,6 +1025,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         keyboardHandler.KeyboardInputGesture.fromName("alt").send()
         winUser.setForegroundWindow(hwnd)
         winUser.setFocus(hwnd)
+        SetActiveWindow(hwnd)
         autoMaximize = getConfig("autoMaximize")
         if  autoMaximize and not isMaximized:
             maximizeWindow(hwnd)
@@ -1085,7 +1040,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.hiddenWindows.append(handle)
         winUser.user32.ShowWindow(handle, winUser.SW_HIDE)
         keyboardHandler.KeyboardInputGesture.fromName("Alt+Tab").send()
-        #winUser.setForegroundWindow(api.getDesktopObject().windowHandle)
         def delayedSpeak():
             speech.cancelSpeech()
             ui.message(_("Hid current window. Now there are %d windows hidden.") % len(self.hiddenWindows))
@@ -1107,8 +1061,3 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             ui.message(_("%d windows shown") % n)
         core.callLater(100, delayedSpeak)
         self.hiddenWindows = []
-
-    @script(description=_("asdfasdf."), gestures=['kb:windows+p'])
-    def script_debugWindows(self, gesture):
-        api.f = api.getForegroundObject()
-        tones.beep(500, 50)
