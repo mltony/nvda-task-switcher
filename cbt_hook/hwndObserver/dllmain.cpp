@@ -426,7 +426,7 @@ bool spawnCbtClient(InitRequestData& data, const std::string& arch)
     PROCESS_INFORMATION piProcInfo;
     ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
 
-    if (!CreateProcess(NULL, command, NULL, NULL, TRUE, 0, NULL, NULL, &siStartInfo, &piProcInfo)) {
+    if (!CreateProcess(NULL, command, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &siStartInfo, &piProcInfo)) {
         DWORD code = GetLastError();
         data.error = "CreateProcess failed. ErrorCode = ";
         data.error += std::to_string(code);
