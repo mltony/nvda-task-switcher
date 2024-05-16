@@ -1045,6 +1045,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     @script(description="Task Switcher script", gestures=['kb:Windows+z'])
     def script_taskSwitch(self, gesture):
         toneHz = 100
+        fg = api.getForegroundObject()
+
         entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
         if entry == self.lastEntry and keyboardHandler.keyCounter == self.lastKeyCounter + 1:
             self.lastGestureCounter += 1
@@ -1066,6 +1068,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             hwndIndex = 0
         hwnd = hwnds[hwndIndex]['hwnd']
         isMaximized = hwnds[hwndIndex]['isMaximized']
+        keyboardHandler.KeyboardInputGesture.fromName("alt").send()
         winUser.setForegroundWindow(hwnd)
         winUser.setFocus(hwnd)
         autoMaximize = getConfig("autoMaximize")
@@ -1104,3 +1107,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             ui.message(_("%d windows shown") % n)
         core.callLater(100, delayedSpeak)
         self.hiddenWindows = []
+
+    @script(description=_("asdfasdf."), gestures=['kb:windows+p'])
+    def script_debugWindows(self, gesture):
+        api.f = api.getForegroundObject()
+        tones.beep(500, 50)
