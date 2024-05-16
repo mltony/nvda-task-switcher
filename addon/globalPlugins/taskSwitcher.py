@@ -552,7 +552,7 @@ class EditEntryDialog(wx.Dialog):
         self.indexEdit = sHelper.addLabeledControl(
             label,
             nvdaControls.SelectOnFocusSpinCtrl,
-            min=-10,
+            min=0,
             max=10,
             initial=self.entry.index,
         )
@@ -765,20 +765,26 @@ class SettingsEntriesDialog(SettingsDialog):
         saveConfig()
         loadConfig()
 
-def openEntryDialog(focus=None):
-    appName = focus.appModule.appName
-    appPath = focus.appModule.appPath
-    entry = TSEntry(
-        name=appName,
-        appName=appName,
-        appPath=appPath,
-        launchCmd=f'"{focus.appModule.appPath}"',
-        index=0,
-    )
-    dialog = EditEntryDialog(parent=None, entry=entry)
+def openEntryDialog(focus=None, entry=None):
+    global globalConfig
+    originalEntry = entry
+    entryIndex = globalConfig.entries.index(entry) if entry is not None else None
+    if focus is not None:
+        appName = focus.appModule.appName
+        appPath = focus.appModule.appPath
+        entry = TSEntry(
+            name=appName,
+            appName=appName,
+            appPath=appPath,
+            launchCmd=f'"{focus.appModule.appPath}"',
+            index=0,
+        )
+    dialog = EditEntryDialog(parent=None, entry=entry, index=entryIndex)
     if dialog.ShowModal()==wx.ID_OK:
-        global globalConfig
-        globalConfig.entries.append(dialog.entry)
+        if entryIndex is not None:
+            globalConfig.entries[entryIndex] = dialog.entry
+        else:
+            globalConfig.entries.append(dialog.entry)
         globalConfig.entries.sort(key=lambda e:e.name)
         saveConfig()
         loadConfig()
@@ -908,6 +914,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def script_taskSwitcherPopupMenu(self, gesture):
         focus = api.getFocusObject()
         fg = api.getForegroundObject()
+        hwnd = fg.windowHandle
+        appName = fg.appModule.appName
+        appPath = fg.appModule.appPath
         gui.mainFrame.prePopup()
         try:
             frame = wx.Frame(None, -1,"Fake popup frame", pos=(1, 1),size=(1, 1))
@@ -919,6 +928,31 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 lambda evt, focus=focus: openEntryDialog(focus=focus),
                 item,
             )
+          # Edit entry and launch options
+            for entry in globalConfig.entries:
+                if appName != entry.appName:
+                    continue
+                if entry.appPath and appPath != entry.appPath:
+                    continue
+                hwnds = self.queryEntry(entry)
+                hwnds = [x['hwnd'] for x in hwnds]
+                if hwnd in hwnds:
+                  # Edit entry
+                    item = menu.Append(wx.ID_ANY, _("&Edit %s") % entry.name)
+                    frame.Bind(
+                        wx.EVT_MENU,
+                        lambda evt, entry=entry: openEntryDialog(focus=None, entry=entry),
+                        item,
+                    )
+                  # Launch entry
+                    if not entry.launchCmd:
+                        continue
+                    item = menu.Append(wx.ID_ANY, _("&Launch %s") % entry.name)
+                    frame.Bind(
+                        wx.EVT_MENU,
+                        lambda evt, entry=entry: self.launchApp(entry),
+                        item,
+                    )
           # hide this window
             item = menu.Append(wx.ID_ANY, _("&Hide this window"))
             frame.Bind(
@@ -933,8 +967,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 lambda evt: self.script_showWindows(None),
                 item,
             )
-            if len(self.hiddenWindows) == 0:
-                item.Enable(False)
+            item.Enable(len(self.hiddenWindows) > 0)
           # reorder windows
             appName = focus.appModule.appName
             item = menu.Append(wx.ID_ANY, _("&Reorder %s windows") % appName)
@@ -968,20 +1001,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         finally:
             gui.mainFrame.postPopup()
 
-    
-    @script(description="Task Switcher script", gestures=['kb:Windows+z'])
-    def script_taskSwitch(self, gesture):
-        entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
-        if entry == self.lastEntry and keyboardHandler.keyCounter == self.lastKeyCounter + 1:
-            self.lastGestureCounter += 1
-        else:
-            self.lastEntry = entry
-            self.lastGestureCounter = 0
-        self.lastKeyCounter = keyboardHandler.keyCounter
-        gestureCounter = self.lastGestureCounter
-        #j = queryObserver("queryHwnds", process_filter=entry.appName, onlyVisible=True, requestTitle=True)
-        #hwnds = j['hwnds']
-        #hwnds.sort(key=lambda item: (item['timestamp'], item['hwnd']))
+    def queryEntry(self, entry):
         hwnds = queryHwnds(entry.appName)
         if entry.appPath:
             hwnds = [
@@ -996,32 +1016,54 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 for hwnd in hwnds
                 if regex.search(hwnd['title']) is not None
             ]
-
-        api.h = hwnds
         n = len(hwnds)
-        if n == 0 or entry.index > n:
-            # Launch app
-            cmd = entry.launchCmd
-            if not cmd:
-                ui.message(f"Cannot launch {entry.name} because launch command is empty!")
-                return
-            p = subprocess.Popen(cmd, shell=True)
-            ui.message(f"Launched {entry.name}")
-            def checkProcessHealth():
-                yield 1000
-                exitCode = p.poll()
-                if exitCode is not None:
-                    speech.cancelSpeech()
-                    if exitCode == 0:
-                        ui.message(f"Application {entry.name} has quit")
-                    else:
-                        ui.message(f"Application {entry.name} has failed with error code {exitCode}")
-            executeAsynchronously(checkProcessHealth())
-            return
-        elif entry.index == 0:
-            hwndIndex = gestureCounter % len(hwnds)
-        else:
+        if entry.index > 0:
             hwndIndex = entry.index - 1
+            hwnds = [hwnds[hwndIndex]]
+        return hwnds
+        
+    def launchApp(self, entry):
+        cmd = entry.launchCmd
+        if not cmd:
+            ui.message(f"Cannot launch {entry.name} because launch command is empty!")
+            return
+        p = subprocess.Popen(cmd, shell=True)
+        ui.message(f"Launched {entry.name}")
+        def checkProcessHealth():
+            yield 1000
+            exitCode = p.poll()
+            if exitCode is not None:
+                speech.cancelSpeech()
+                if exitCode == 0:
+                    ui.message(f"Application {entry.name} has quit")
+                else:
+                    ui.message(f"Application {entry.name} has failed with error code {exitCode}")
+        executeAsynchronously(checkProcessHealth())
+        return
+
+    
+    @script(description="Task Switcher script", gestures=['kb:Windows+z'])
+    def script_taskSwitch(self, gesture):
+        toneHz = 100
+        entry = globalGesturesToEntries[getKeystrokeFromGesture(gesture)]
+        if entry == self.lastEntry and keyboardHandler.keyCounter == self.lastKeyCounter + 1:
+            self.lastGestureCounter += 1
+        else:
+            self.lastEntry = entry
+            self.lastGestureCounter = 0
+        self.lastKeyCounter = keyboardHandler.keyCounter
+        gestureCounter = self.lastGestureCounter
+        hwnds = self.queryEntry(entry)
+        n = len(hwnds)
+        if n == 0:
+            # Launch app
+            return self.launchApp(entry)
+        elif entry.index == 0:
+            hwndIndex = gestureCounter % n
+            if gestureCounter > 0 and hwndIndex == 0:
+                toneHz = 1000
+        else:
+            hwndIndex = 0
         hwnd = hwnds[hwndIndex]['hwnd']
         isMaximized = hwnds[hwndIndex]['isMaximized']
         winUser.setForegroundWindow(hwnd)
@@ -1030,7 +1072,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         if  autoMaximize and not isMaximized:
             maximizeWindow(hwnd)
         volume = getConfig("clickVolume")
-        tones.beep(100, 20, left=volume, right=volume)
+        tones.beep(toneHz, 20, left=volume, right=volume)
 
     hiddenWindows = []
     @script(description=_("Hide current window."), gestures=['kb:NVDA+Shift+-'])
