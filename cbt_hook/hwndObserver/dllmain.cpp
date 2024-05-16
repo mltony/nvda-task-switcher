@@ -25,7 +25,7 @@
 
 using nlohmann::json;
 
-#define MYDEBUG
+// #define MYDEBUG
 #ifdef MYDEBUG
     std::mutex mylogMtx;
     #define DF_NAME "H:\\2.txt"
@@ -67,7 +67,7 @@ using nlohmann::json;
 std::wstring_convert<std::codecvt_utf8<wchar_t>> CONVERTER;
 const std::string REQ_PROCESS_FILTER("process_filter");
 const std::string BOOT_TIME_COMMAND = "Wmic os get lastbootuptime";
-const std::vector<std::string> arches = {/*"Win32",*/ "x64" };
+const std::vector<std::string> arches = {"Win32", "x64" };
 std::wstring dllPath;
 HINSTANCE hInstance = nullptr;
 HWND invisibleHwnd = nullptr;
@@ -128,32 +128,7 @@ void from_json(const json& j, HwndCache& cache) {
     j.at("bootTime").get_to(cache.bootTime);
     j.at("hwndTimes").get_to(cache.hwndTimes);
 }
-/*
-struct WindowData {
-    UINT32 hwnd;
-    std::string executable;
-    UINT64 timestamp;
 
-    WindowData(UINT32 hwnd, const std::string& executable, UINT64 timestamp)
-        : hwnd(hwnd), executable(executable), timestamp(timestamp) {}
-};
-void to_json(json& j, const WindowData& data) {
-    j = json{
-        {"hwnd", data.hwnd},
-        {"appPath", data.executable},
-        {"timestamp", data.timestamp},
-    };
-}
-
-
-struct WindowsCollection {
-    UINT64 timestamp;
-    std::unordered_map<std::string, std::vector< WindowData>> collection;
-    std::unordered_set<UINT32> allHwnds;
-};
-
-std::shared_ptr< WindowsCollection> collection;
-*/
 
 std::wstring toLowerCase(const std::wstring& str) {
     std::wstring result = str;
@@ -167,9 +142,7 @@ std::wstring getFileName(const std::wstring& fullPath) {
     size_t pos = fullPath.find_last_of(sep);
     if (pos != std::wstring::npos) {
         std::wstring fileName = toLowerCase(fullPath.substr(pos + 1));
-        bool fff = fileName == L"notepad++.exe";
         size_t pos = fileName.rfind(L".exe");
-        if (fff) mylog("fff %lu", (UINT32)pos);
         if (pos != std::wstring::npos) {
             return fileName.substr(0, pos); // Return the substring without the ".exe" extension
         }
@@ -177,97 +150,7 @@ std::wstring getFileName(const std::wstring& fullPath) {
     }
     return L""; // Return an empty string if no separator is found
 }
-/*
-BOOL CALLBACK EnumWindowsCallback2(HWND hwnd, LPARAM lParam)
-{
-    UINT32 u32Hwnd = (UINT32)hwnd;
-    WindowsCollection& collection= *reinterpret_cast<WindowsCollection*>(lParam);
-    collection.allHwnds.emplace(u32Hwnd);
-    HWND hParent = GetParent(hwnd);
-    //mylog("cb hwnd=%lu, parentHwnd = %lu", (UINT32)hwnd, (UINT32)hParent);
-    if (hParent == nullptr) {
-        // This is not a top-level window, skipping.
-        return true;
-    }
-    DWORD processId;
-    DWORD code = GetWindowThreadProcessId(hwnd, &processId);
-    if (code == 0) {
-        auto error = GetLastError();
-        mylog("Getting processID failed! Error=%d", (int)error);
-        return true;
-    }
-    //mylog("ProcessID = %lu", (UINT32)processId);
-    HANDLE processHandle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
-    if (processHandle == nullptr) {
-        auto error = GetLastError();
-        mylog("Failed to open process! error=%d", (int)error);
-        return true;
-    }
-    std::wstring wPath;
-    wPath.resize(MAX_BUFFER_SIZE);
-    DWORD size = GetModuleFileNameEx(processHandle, NULL, &wPath[0], MAX_BUFFER_SIZE);
-    wPath.resize(size);
-    std::string sPath = CONVERTER.to_bytes(wPath);
-    CloseHandle(processHandle);
-    std::string sFileName = getFileName(sPath);
-    
-    if (false) {
-        size_t length = GetWindowTextLength(hwnd);
-        code = GetLastError();
-        if ((length == 0) && (code != 0)) {
-            //data.errors.push_back(code);
-            return true;
-        }
-        std::wstring wTitle;
-        wTitle.resize(length + 1);
-        length = GetWindowText(hwnd, &wTitle[0], length + 1);
-        code = GetLastError();
-        if ((length == 0) && (code != 0)) {
-            //data.errors.push_back(code);
-            return true;
-        }
-        wTitle.resize(length);
-        std::string sTitle = CONVERTER.to_bytes(wTitle);
-    }
 
-    UINT64 timestamp = collection.timestamp;
-    if (hwndCache.hwndTimes.count(u32Hwnd) > 0) {
-        timestamp = hwndCache.hwndTimes[u32Hwnd];
-    }
-    
-    if (collection.collection.count(sFileName) == 0) {
-        collection.collection.emplace(sFileName, std::vector< WindowData>());
-    }
-    std::vector< WindowData>& windowList  = collection.collection[sFileName];
-    windowList.emplace_back(WindowData(u32Hwnd, sPath, timestamp));
-    return TRUE;
-}
-
-std::string getBootTime()
-{
-    // Don't use this one. somehow calling this command from within NVDA triggers COM exception.
-    if (true) {
-        throw std::runtime_error("This function sucks");
-    }
-    FILE* pipe = _popen(BOOT_TIME_COMMAND.c_str(), "r");
-    if (!pipe) {
-        return "Cannot open pipe!";
-    }
-    char buffer[128];
-    std::string result;
-    size_t i = 0;
-    //while (fscanf(pipe, "%127s", buffer) != EOF) {
-    while (fscanf_s(pipe, "%127s", buffer, sizeof(buffer)) != EOF) {
-        buffer[sizeof(buffer) - 1] = '\0';
-        if (i == 1) {
-            result = buffer;
-        }
-        i++;
-    }
-    _pclose(pipe);
-    return result;
-}
-*/
 
 std::string dumpCache(std::string &fileName)
 {
@@ -326,24 +209,8 @@ void cacheDumpThreadFunc(std::string fileName)
             break;
         }
         mylog("CDTF:loop");
-        /*
-        std::shared_ptr<WindowsCollection> newCollection = std::make_shared<WindowsCollection>();
-        newCollection->timestamp = getTimestamp();
-        */
         {
             std::lock_guard<std::mutex> guard(cacheMtx);
-            /*
-            auto start = std::chrono::high_resolution_clock::now();
-            EnumWindows(EnumWindowsCallback2, reinterpret_cast<LPARAM>(newCollection.get()));
-            auto stop = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-            std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration);
-            int ms_int = ms.count();
-            int dt = ms_int;
-            mylog("EnumWindows dt %d ms", dt);
-            collection = newCollection;
-            updateCache(newCollection->allHwnds, newCollection->timestamp);
-            */
             std::string error = dumpCache(fileName);
             if (!error.empty()) {
                 mylog("Error dumping cache: %s", error.c_str());
@@ -356,7 +223,6 @@ void cacheDumpThreadFunc(std::string fileName)
 std::string loadCache(std::string &fileName, std::string &bootTime)
 {
     std::lock_guard<std::mutex> guard(cacheMtx);
-    //std::string bootTime = getBootTime();
     mylog("Current boot time: %s", bootTime.c_str());
     if (bootTime.length() == 0) {
         mylog("Retrieved boot time is empty");
@@ -425,6 +291,7 @@ std::string terminateCache(std::string& fileName)
     std::string error = dumpCache(fileName);
     return error;
 }
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     HWND targetHwnd = (HWND)wParam;
@@ -538,8 +405,6 @@ bool spawnCbtClient(InitRequestData& data, const std::string& arch)
     clientPath += CONVERTER.from_bytes(arch);
     clientPath += L"\\";
     clientPath += L"cbt_client.exe";
-    //clientPath += L" ";
-    //clientPath += std::to_wstring((UINT32)data.hwnd);
     mylog("Launching: %s", CONVERTER.to_bytes(clientPath).c_str());
     size_t len = clientPath.length();
     wchar_t* command = _wcsdup(clientPath.c_str());
@@ -561,7 +426,6 @@ bool spawnCbtClient(InitRequestData& data, const std::string& arch)
     PROCESS_INFORMATION piProcInfo;
     ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
 
-    // Replace "command" with the actual command you wish to execute.
     if (!CreateProcess(NULL, command, NULL, NULL, TRUE, 0, NULL, NULL, &siStartInfo, &piProcInfo)) {
         DWORD code = GetLastError();
         data.error = "CreateProcess failed. ErrorCode = ";
@@ -582,7 +446,6 @@ bool spawnCbtClient(InitRequestData& data, const std::string& arch)
 DWORD killCbtClient(std::string arch)
 {
     HANDLE g_hChildStd_IN_Wr = processHandles[arch];
-    // Write to the pipe that is the standard input for a child process.
     const char* inputText = "quit";
     DWORD dwWritten;
     if (!WriteFile(g_hChildStd_IN_Wr, inputText, strlen(inputText), &dwWritten, NULL)) {
@@ -610,7 +473,6 @@ json init(json& request)
     mylog("init:loading cache");
     std::string error = loadCache(cacheFileName, bootupTime);
     if (!error.empty()) {
-        //mylog("Error during loadCache: %s", error.c_str());
         data.error = "Failed to load cache from file: " + error;
         return data;
     }
@@ -659,15 +521,6 @@ json terminate(json& request)
         return result;
     }
     PostMessage(invisibleHwnd, WM_HWND_OBSERVER_DESTROY_WINDOW, 0, 0);
-    /*
-    if (!DestroyWindow(invisibleHwnd)) {
-        DWORD code = GetLastError();
-        mylog("Terminate: DestroyWindow failed: code = %lu", code);
-        result["error"] = "DestroyWindow failed : code = " +std::to_string(code);
-        return result;
-    }
-    invisibleHwnd = nullptr;
-    */
 
     mylog("Terminate: killing windowThread");
     if (windowThread == nullptr) {
@@ -713,13 +566,11 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
     RequestData& data = *reinterpret_cast<RequestData*>(lParam);
     UINT32 uHwnd = (UINT32)hwnd;
     data.allHwnds.emplace(uHwnd);
-    bool ddd = 199080 == (UINT32)hwnd;
     bool needCheckFileName = true;
     std::string sPath;
     if (appNameCache.count(uHwnd) > 0) {
         std::wstring wAppName = appNameCache[uHwnd];
         bool passesFilter = data.processFilter == wAppName;
-        if(ddd) mylog("ggg checking '%s' result=%ul", CONVERTER.to_bytes(wAppName).c_str(), (UINT32)passesFilter);
         if (!passesFilter) {
             return true;
         }
@@ -727,13 +578,11 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
         needCheckFileName = false;
     }
     HWND hParent = GetParent(hwnd);
-    if (ddd)mylog("ddd %lu", (UINT32)hParent);
     if (hParent != nullptr) {
         // This is not a top-level window, skipping.
         return true;
     }    
     BOOL isVisible = IsWindowVisible(hwnd);
-    if (ddd)mylog("ddd isVisible %lu", (UINT32)isVisible);
     if ((data.onlyVisible) && (!isVisible)) {
         // requested only visible windows and this one is invisible
         return true;
@@ -839,81 +688,6 @@ json queryHwndsImpl(json &request)
     return response;
 }
 
-/*
-void processWindows(
-    json &j,
-    const std::vector< WindowData> &windows,
-    bool onlyVisible,
-    bool requestTitle
-) 
-{
-    for (const WindowData& window : windows) {
-        BOOL isVisible = IsWindowVisible((HWND)window.hwnd);
-        if (onlyVisible && (!isVisible)) {
-            continue;
-        }
-        auto entry = j.emplace_back(window);
-        entry["visible"] = isVisible;
-        if (requestTitle) {
-            std::wstring wTitle;
-            wTitle.resize(MAX_BUFFER_SIZE + 1);
-            int length = GetWindowText((HWND)window.hwnd, &wTitle[0], MAX_BUFFER_SIZE);
-            auto code = GetLastError();
-            if ((length == 0) && (code != 0)) {
-                mylog("Can't obtain window title: %lu", (UINT32)code);
-            }
-            wTitle.resize(length);
-            entry["title"] = CONVERTER.to_bytes(wTitle);
-        }
-    }
-}
-
-json queryHwndsImpl(json& request)
-{
-    mylog("queryHwndsImpl");
-    bool onlyVisible = request["onlyVisible"];
-    bool requestTitle= request["requestTitle"];
-    std::shared_ptr< WindowsCollection> col = collection;
-    mylog("QIH1");
-    json j = json({
-        {"windows", json::array()}
-    });
-    auto& jw = j["windows"];
-    mylog("QIH2");
-    if (request.contains(REQ_PROCESS_FILTER)) {
-        mylog("QIH2.5");
-        std::string processName = request[REQ_PROCESS_FILTER];
-        mylog("QIH3 %s", processName.c_str());
-        if (col->collection.count(processName) > 0) {
-            mylog("QIH4");
-            processWindows(
-                jw,
-                col->collection[processName],
-                onlyVisible,
-                requestTitle
-            );
-            mylog("QIH5");
-        }
-    }
-    else {
-        mylog("QIH3");
-        for (const auto& pair : col->collection) {
-            mylog("QIH4 %s", pair.first.c_str());
-            processWindows(
-                jw,
-                pair.second,
-                onlyVisible,
-                requestTitle
-            );
-        }
-    }
-    mylog("QIH99");
-    return j;
-
-}
-*/
-
-
 json updateTimestamps(json& request)
 {
     std::lock_guard<std::mutex> guard(cacheMtx);
@@ -972,9 +746,6 @@ extern "C" __declspec(dllexport) void freeBuffer(char* buffer)
     free(buffer);
 }
 
-
-
-
 BOOL APIENTRY DllMain( HMODULE hModule,
                        DWORD  ul_reason_for_call,
                        LPVOID lpReserved
@@ -992,7 +763,6 @@ BOOL APIENTRY DllMain( HMODULE hModule,
                 }
                 fclose(df);
             #endif
-            
             std::wstring wPath;
             wPath.resize(MAX_BUFFER_SIZE);
             //DWORD size = GetModuleFileNameEx((HMODULE)hModule, NULL, &wPath[0], MAX_BUFFER_SIZE); // WTF this doesn't work!?
