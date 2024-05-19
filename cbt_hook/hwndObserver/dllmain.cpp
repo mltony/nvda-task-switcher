@@ -25,10 +25,10 @@
 
 using nlohmann::json;
 
-// #define MYDEBUG
+//#define MYDEBUG
 #ifdef MYDEBUG
     std::mutex mylogMtx;
-    #define DF_NAME "H:\\2.txt"
+    #define DF_NAME "H:\\od\\2.txt"
     FILE* openDebugLog() 
     {
         FILE* df = nullptr;
@@ -234,24 +234,41 @@ std::string loadCache(std::string &fileName, std::string &bootTime)
     if (!fileExists) {
         mylog("Cache file not found - creating a blank cache.");
         hwndCache = HwndCache();
+        hwndCache.bootTime = bootTime;
         std::ofstream fout(fileName, std::ios::out | std::ios::binary);
         if (!fout.is_open()) {
             return "Cannot create cache file " + fileName;
         }
     }
     else {
+        mylog("Cache file exists - reading cache");
         json j;
         HwndCache loadedCache;
         try {
             fin >> j;
+            mylog("Loaded json object from cache file");
             loadedCache = j;
+            mylog("Converted json object to cache instance");
         }
         catch (const json::parse_error& e) {
             // Do nothing - will create a blank cache
+            mylog("JSON parse error!");
         }
+        mylog("Checking boot time");
         // Boot time is reported with up to second accuracy, so comparing difference
-        INT64 uBootTime = std::stoull(bootTime);
-        INT64 uCacheBootTime = std::stoull(loadedCache.bootTime);
+        INT64 uBootTime, uCacheBootTime;
+        try {
+            uBootTime = std::stoull(bootTime);
+        }
+        catch (std::invalid_argument& e) {
+            return "Invalid boot time received from python: " + bootTime;
+        }
+        try {
+            uCacheBootTime = std::stoull(loadedCache.bootTime);
+        }
+        catch (std::invalid_argument& e) {
+            return "Invalid boot time read from cache on disk: " + loadedCache.bootTime;
+        }
         INT64 uBootTimeDiff = std::abs(uBootTime - uCacheBootTime);
         mylog("uBootTime =%lld, uCacheBootTime =%lld, uBootTimeDiff =%lld", uBootTime, uCacheBootTime, uBootTimeDiff);
         if (uBootTimeDiff < 5) {
