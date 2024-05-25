@@ -974,7 +974,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         n = len(hwnds)
         if entry.index > 0:
             hwndIndex = entry.index - 1
-            hwnds = [hwnds[hwndIndex]]
+            try:
+                hwnds = [hwnds[hwndIndex]]
+            except IndexError:
+                hwnds = []
         return hwnds
         
     def launchApp(self, entry):

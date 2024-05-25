@@ -523,7 +523,8 @@ json terminate(json& request)
     mylog("Terminate: killing cbt clients");
     for (std::string arch : arches) {
         DWORD code = killCbtClient(arch);
-        if (code != 0) {
+        DWORD brokenPipe = 232; // (0xE8)
+        if ((code != 0) && (code != brokenPipe)) {
             std::string msg = "Error ";
             msg += std::to_string(code);
             msg += " while terminating CBT client " + arch;
