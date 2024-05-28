@@ -21,7 +21,7 @@ int main(int argc, char ** argv)
         return 1;
     }
     std::cout << "Successfully installed CBT hook! Press enter to quit." << std::endl;
-    //Beep(500, 50);
+    //teep(500, 50);
     std::string dummy;
     std::cin >> dummy;
     std::cout << "Shutting down" << std::endl;

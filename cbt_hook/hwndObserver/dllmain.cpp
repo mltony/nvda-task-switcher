@@ -485,7 +485,7 @@ json init(json& request)
         data.error = "cacheFileName not specified";
         return data;
     }
-    std::string cacheFileName = request["cacheFileName"];
+    cacheFileName = request["cacheFileName"];
     std::string bootupTime = request["bootupTime"];
     mylog("init:loading cache");
     std::string error = loadCache(cacheFileName, bootupTime);
