@@ -1,0 +1,265 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"POT-Creation-Date: 2024-06-05 12:17+0300\n"
+"PO-Revision-Date: 2024-06-06 08:45+0300\n"
+"Last-Translator: Heorhii Halas <nvda.translation.uk@gmail.com>\n"
+"Language-Team: \n"
+"Language: uk_UA\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 3.4.4\n"
+"X-Poedit-Basepath: addon/globalPlugins\n"
+"X-Poedit-SearchPath-0: .\n"
+"X-Poedit-SearchPath-1: .\n"
+
+#: taskSwitcher.py:331 taskSwitcher.py:839
+msgid "Task Switcher"
+msgstr "Перемикач завдань"
+
+#: taskSwitcher.py:336
+msgid "Automatically maximize target window"
+msgstr "Автоматично розгортати цільове вікно"
+
+#: taskSwitcher.py:340
+msgid "Volume of click"
+msgstr "Гучність натискання"
+
+#: taskSwitcher.py:344
+msgid "Cache file location (requires restart)"
+msgstr "Розташування файлу кешу (потрібне перезавантаження)"
+
+#: taskSwitcher.py:476
+msgid "Edit Task Switcher entry"
+msgstr "Редагувати запис перемикача завдань"
+
+#: taskSwitcher.py:485
+msgid "&Name:"
+msgstr "&Назва:"
+
+#: taskSwitcher.py:489
+msgid ""
+"&Application name (executable file name without .exe extension): (required):"
+msgstr ""
+"&Назва програми (назва виконуваного файлу без розширення .exe): "
+"(обов’язково):"
+
+#: taskSwitcher.py:493
+msgid "&Keystroke"
+msgstr "&Натискання клавіші"
+
+#: taskSwitcher.py:497
+msgid "&Application full path to executable (optional)"
+msgstr "&Повний шлях програми до виконуваного файлу (необов’язково)"
+
+#: taskSwitcher.py:501
+msgid "&Launch command (optional)"
+msgstr "&Команда запуску (необов'язково)"
+
+#: taskSwitcher.py:505
+msgid "Window &title regex pattern (optional):"
+msgstr "Шаблон регулярного виразу &заголовка вікна (необов’язково):"
+
+#: taskSwitcher.py:509
+msgid ""
+"Index of selected window (or set to zero to cycle through all available "
+"windows):"
+msgstr ""
+"Індекс вибраного вікна (або встановіть нуль для циклічного переходу між "
+"усіма доступними вікнами):"
+
+#: taskSwitcher.py:533
+#, python-format
+msgid "Failed to compile regular expression: %s"
+msgstr "Не вдалося скомпілювати регулярний вираз: %s"
+
+#: taskSwitcher.py:537 taskSwitcher.py:546 taskSwitcher.py:551
+#: taskSwitcher.py:557
+msgid "Task Switcher entry error"
+msgstr "Помилка введення перемикача завдань"
+
+#: taskSwitcher.py:545
+msgid ""
+"Error: this name is already used for another entry. Please specify a unique "
+"name."
+msgstr ""
+"Помилка: ця назва вже використовується для іншого запису. Будь ласка, "
+"вкажіть унікальну назву."
+
+#: taskSwitcher.py:550
+msgid ""
+"Error: this keystroke is already used for another entry. Please specify a "
+"unique keystroke."
+msgstr ""
+"Помилка: ця клавіша вже використовується для іншого запису. Будь ласка, "
+"вкажіть унікальну клавішу."
+
+#: taskSwitcher.py:556
+msgid "Error: application name must be specified."
+msgstr "Помилка: потрібно вказати назву програми."
+
+#: taskSwitcher.py:576 taskSwitcher.py:578
+#, python-format
+msgid "&Keystroke: %s"
+msgstr "&Клавіша: %s"
+
+#: taskSwitcher.py:591
+msgid "Press desired keystroke now"
+msgstr "Натисніть бажану клавішу зараз"
+
+#: taskSwitcher.py:599
+msgid ""
+"Keystroke deleted and entry is disable until you select another keystroke"
+msgstr ""
+"Натискання клавіші видалено, і введення заборонено, доки ви не виберете іншу "
+"клавішу"
+
+#: taskSwitcher.py:601
+#, python-format
+msgid "Invalid keystroke %s: cannot overload essential  NVDA keystrokes!"
+msgstr "Недійсна клавіша %s: не можна перевизначати основні клавіші NVDA!"
+
+#: taskSwitcher.py:617
+msgid "TaskSwitcher entries"
+msgstr "Записи перемикача завдань"
+
+#: taskSwitcher.py:628
+msgid "&Entries"
+msgstr "&Записи"
+
+#: taskSwitcher.py:637
+msgid "Name"
+msgstr "Назва"
+
+#: taskSwitcher.py:638
+msgid "Keystroke"
+msgstr "Натискання клавіші"
+
+#: taskSwitcher.py:639
+msgid "AppName"
+msgstr "Назва програми"
+
+#: taskSwitcher.py:640
+msgid "AppPath"
+msgstr "Шлях програми"
+
+#: taskSwitcher.py:641
+msgid "WindowRegex"
+msgstr "Регулярний вираз вікна"
+
+#: taskSwitcher.py:642
+msgid "Index"
+msgstr "Індекс"
+
+#: taskSwitcher.py:648
+msgid "&Add"
+msgstr "&Додати"
+
+#: taskSwitcher.py:650
+msgid "&Edit"
+msgstr "&Редагувати"
+
+#: taskSwitcher.py:652
+msgid "&Remove"
+msgstr "&Видалити"
+
+#: taskSwitcher.py:688
+msgid ""
+"In order to add new entry, please switch to the desired application, open "
+"Task Swittcher menu by pressing NVDA+control+f12 and select 'create a new "
+"entry'"
+msgstr ""
+"Щоб додати новий запис, перейдіть у потрібну програму, відкрийте меню "
+"перемикача завдань, натиснувши NVDA+control+f12, і виберіть «створити новий "
+"запис»."
+
+#: taskSwitcher.py:689
+msgid "Bookmark Error"
+msgstr "Помилка запису"
+
+#: taskSwitcher.py:752
+#, python-format
+msgid "Rearrange windows for %s"
+msgstr "Переставити вікна для %s"
+
+#: taskSwitcher.py:759
+msgid "&Windows"
+msgstr "&Вікна"
+
+#: taskSwitcher.py:767
+msgid "Title"
+msgstr "Заголовок"
+
+#: taskSwitcher.py:773
+msgid "Move &up"
+msgstr "Перемістити &вгору"
+
+#: taskSwitcher.py:775
+msgid "Move &down"
+msgstr "Перемістити &вниз"
+
+#: taskSwitcher.py:777 taskSwitcher.py:779
+msgid "Move to &top"
+msgstr "Перемістити на &початок"
+
+#: taskSwitcher.py:868
+msgid "Show task switcher op-up menu"
+msgstr "Показати спливне меню Перемикача завдань"
+
+#: taskSwitcher.py:880
+msgid "&Create a new entry for this application"
+msgstr "&Створити новий запис для цієї програми"
+
+#: taskSwitcher.py:896
+#, python-format
+msgid "&Edit %s"
+msgstr "&Редагувати %s"
+
+#: taskSwitcher.py:905
+#, python-format
+msgid "&Launch %s"
+msgstr "&Запустити %s"
+
+#: taskSwitcher.py:912
+msgid "&Hide this window"
+msgstr "&Сховати це вікно"
+
+#: taskSwitcher.py:919
+msgid "&Show hidden windows"
+msgstr "&Показати приховані вікна"
+
+#: taskSwitcher.py:928
+#, python-format
+msgid "&Reorder %s windows"
+msgstr "&Пересортувати вікна %s"
+
+#: taskSwitcher.py:937
+msgid "&Show all entries"
+msgstr "&Показати всі записи"
+
+#: taskSwitcher.py:1002
+msgid "Task Switcher script"
+msgstr "Скрипт Перемикача завдань"
+
+#: taskSwitcher.py:1039
+msgid "Hide current window."
+msgstr "Приховати поточне вікно."
+
+#: taskSwitcher.py:1048
+#, python-format
+msgid "Hid current window. Now there are %d windows hidden."
+msgstr "Приховане поточне вікно. Зараз приховано %d вікон."
+
+#: taskSwitcher.py:1051
+msgid "Show hidden windows."
+msgstr "Показати приховані вікна."
+
+#: taskSwitcher.py:1054
+msgid "No windows hidden or all hidden windows have been already shown."
+msgstr "Немає прихованих вікон або всі приховані вікна вже показано."
+
+#: taskSwitcher.py:1064
+#, python-format
+msgid "%d windows shown"
+msgstr "Показано %d вікон"
