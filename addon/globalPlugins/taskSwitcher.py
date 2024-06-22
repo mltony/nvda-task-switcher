@@ -1025,7 +1025,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             hwndIndex = 0
         hwnd = hwnds[hwndIndex]['hwnd']
         isMaximized = hwnds[hwndIndex]['isMaximized']
-        keyboardHandler.KeyboardInputGesture.fromName("alt").send()
+
         winUser.setForegroundWindow(hwnd)
         winUser.setFocus(hwnd)
         SetActiveWindow(hwnd)
