@@ -1,6 +1,6 @@
 @echo off
 
-set ff=taskSwitcher-1.1.nvda-addon
+set ff=taskSwitcher-1.2.nvda-addon
 rm %ff%
 rm H:\od\%ff%
 rm addon\globalPlugins\hwndObserver.dll

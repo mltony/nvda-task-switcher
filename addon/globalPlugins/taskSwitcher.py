@@ -69,6 +69,7 @@ from typing import List
 import globalVars
 from ctypes import cdll, c_void_p, c_wchar_p, c_char_p
 import subprocess
+import NVDAObjects
 
 try:
     REASON_CARET = controlTypes.REASON_CARET
@@ -280,7 +281,7 @@ def queryObserver(command, **kwargs):
         observerDll.freeBuffer(result)
 
 def queryHwnds(appName):
-    j = queryObserver("queryHwnds", process_filter=appName, onlyVisible=True, requestTitle=True)
+    j = queryObserver("queryHwnds", process_filter=appName, onlyVisible=True, requestTitle=False)
     hwnds = j['hwnds']
     hwnds.sort(key=lambda item: (item['timestamp'], item['hwnd']))
     return hwnds
@@ -964,6 +965,20 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 for hwnd in hwnds
                 if hwnd['path'].lower() == entry.appPath.lower()
             ]
+        for d in hwnds:
+            # For some apps, like Google Chrome, GetWindowText returns incorrect title.
+            # Thatt is not the title reported by NVDA+T command.
+            # Trying to retrieve more accurate title via IA2.
+            name = None
+            try:
+                obj = NVDAObjects.IAccessible.getNVDAObjectFromEvent(d['hwnd'], winUser.OBJID_CLIENT, 0)
+                name = obj.name
+            except KeyError:
+                pass
+            if name is None:
+                name = winUser.getWindowText(d['hwnd'])
+            if name is not None:
+                d['title'] = name
         if entry.pattern:
             regex = re.compile(entry.pattern)
             hwnds = [
