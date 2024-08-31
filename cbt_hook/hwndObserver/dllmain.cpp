@@ -1,4 +1,4 @@
-// dllmain.cpp : Defines the entry point for the DLL application.
+﻿// dllmain.cpp : Defines the entry point for the DLL application.
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
@@ -341,7 +341,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         //mylog("WM_CBT_ACTIVATE_MSG");
         return 0;
     case WM_CBT_CREATE_WINDOW_MSG:
-        mylog("WM_CBT_CREATE_WINDOW_MSG HWND=%lu t=%llu", (UINT32)(DWORD)targetHwnd, (UINT64)timestamp);
+        //mylog("WM_CBT_CREATE_WINDOW_MSG HWND=%lu t=%llu", (UINT32)(DWORD)targetHwnd, (UINT64)timestamp);
         //MessageBeep(0xFFFFFFFF);        
         {
             std::lock_guard<std::mutex> guard(cacheMtx);
@@ -353,7 +353,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     case WM_CBT_DESTROY_WINDOW_MSG:
-        mylog("WM_CBT_DESTROY_WINDOW_MSG");
+        //mylog("WM_CBT_DESTROY_WINDOW_MSG");
         {
             std::lock_guard<std::mutex> guard(cacheMtx);
             hwndCache.hwndTimes.erase((DWORD)targetHwnd);
@@ -658,22 +658,34 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
             return true;
         }
     }
-    size_t length = GetWindowTextLength(hwnd);
-    auto code = GetLastError();
-    if ((length == 0) && (code != 0)) {
-        data.errors.push_back(code);
-        return true;
+    if (false) {
+        // Previously we tried to retrieve window title here.
+        // There are two problems with this approach:
+        // 1. It returns incorrect result e.g. for Chrome.
+        // Better result for Chrome is obtained via IAccessible2 from Python - at least it is
+        // consistent with NVDA+T speech.
+        // 2. When certain Unicode characters are present (e.g. 🔥), it fails.
+        // But maybe my code is screwed up.
+        // In either case, disable title retrieval.
+
+        size_t length = GetWindowTextLength(hwnd);
+        auto code = GetLastError();
+        if ((length == 0) && (code != 0)) {
+            data.errors.push_back(code);
+            return true;
+        }
+        std::wstring wTitle;
+        wTitle.resize(length + 1);
+        length = GetWindowText(hwnd, &wTitle[0], length + 1);
+        code = GetLastError();
+        if ((length == 0) && (code != 0)) {
+            data.errors.push_back(code);
+            return true;
+        }
+        wTitle.resize(length);
+        std::string sTitle = CONVERTER.to_bytes(wTitle);
+        
     }
-    std::wstring wTitle;
-    wTitle.resize(length + 1);
-    length = GetWindowText(hwnd, &wTitle[0], length + 1);
-    code = GetLastError();
-    if ((length == 0) && (code != 0)) {
-        data.errors.push_back(code);
-        return true;
-    }
-    wTitle.resize(length);
-    std::string sTitle = CONVERTER.to_bytes(wTitle);
     UINT64 timestamp = data.timestamp;
     if (hwndCache.hwndTimes.count((UINT32)hwnd) > 0) {
         timestamp = hwndCache.hwndTimes[(DWORD)hwnd];
@@ -682,7 +694,7 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
     data.hwnds.push_back({
         {"hwnd", (UINT32)hwnd},
         {"path", sPath},
-        {"title", sTitle},
+        //{"title", sTitle},
         {"timestamp", timestamp},
         {"isMaximized", isMaximized},
     });
