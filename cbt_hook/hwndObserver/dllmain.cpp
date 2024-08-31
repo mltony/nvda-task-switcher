@@ -25,7 +25,7 @@
 
 using nlohmann::json;
 
-//#define MYDEBUG
+#define MYDEBUG
 #ifdef MYDEBUG
     std::mutex mylogMtx;
     #define DF_NAME "H:\\od\\2.txt"
@@ -63,6 +63,19 @@ using nlohmann::json;
     {}
 #endif
 #define MAX_BUFFER_SIZE 1024
+
+class CBTException : public std::exception {
+  private:
+    std::string message;
+
+  public:
+    CBTException(const std::string& msg) : message(msg) {}
+
+    const char* what() const throw() override {
+        return message.c_str();
+    }
+};
+
 
 std::wstring_convert<std::codecvt_utf8<wchar_t>> CONVERTER;
 const std::string REQ_PROCESS_FILTER("process_filter");
@@ -701,7 +714,7 @@ json queryHwndsImpl(json &request)
     mylog("EnumWindows Done");
     json response = { 
         {"hwnds", data.hwnds},
-    {"errors", data.errors},
+        {"errors", data.errors},
     };
     return response;
 }
@@ -726,33 +739,40 @@ extern "C" __declspec(dllexport) char* queryHwnds(char* request)
     mylog("Request received");
     std::string requestStr(request);
     json  requestJson;
+    json responseJson = {};
     try {
         requestJson = json::parse(requestStr);
+        std::string command;
+        if (requestJson.contains("command")) {
+            command = requestJson["command"];
+        }
+        else {
+            throw CBTException("No command field in input JSON");
+        }
+        mylog("command = %s", command.c_str());
+        if (command == "queryHwnds") {
+            responseJson = queryHwndsImpl(requestJson);
+        }
+        else if (command == "init") {
+            responseJson = init(requestJson);
+        }
+        else if (command == "terminate") {
+            responseJson = terminate(requestJson);
+        }
+        else if (command == "updateTimestamps") {
+            responseJson = updateTimestamps(requestJson);
+        }
+        else {
+            responseJson = { {"error", "Unknown command"} };
+        }
     }
-    catch (json::parse_error& e) {
-        char* ptr = _strdup("{\"error\":\"Error parsing input json!\"}");
-        return ptr;
+    catch (const std::exception& e) {
+        mylog("Caught exception: %s", e.what());
+        responseJson["error"] = e.what();
     }
-    std::string command;
-    if (requestJson.contains("command")) {
-        command = requestJson["command"];
-    }
-    mylog("command = %s", command.c_str());
-    json responseJson;
-    if (command == "queryHwnds") {
-        responseJson = queryHwndsImpl(requestJson);
-    }
-    else if (command == "init") {
-        responseJson = init(requestJson);
-    }
-    else if (command == "terminate") {
-        responseJson = terminate(requestJson);
-    }
-    else if (command == "updateTimestamps") {
-        responseJson = updateTimestamps(requestJson);
-    }
-    else {
-        responseJson = { {"error", "Unknown command"}};
+    catch (...) {
+        mylog("Caught unknown exception!");
+        responseJson["error"] = "Unknown exception";
     }
     std::string responseStr = responseJson.dump(4);
     char*  ptr = _strdup(responseStr.c_str());
