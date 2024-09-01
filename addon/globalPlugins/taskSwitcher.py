@@ -70,6 +70,7 @@ import globalVars
 from ctypes import cdll, c_void_p, c_wchar_p, c_char_p
 import subprocess
 import NVDAObjects
+import psutil
 
 try:
     REASON_CARET = controlTypes.REASON_CARET
@@ -301,7 +302,27 @@ def getBootupTime2():
     import psutil
     return str(psutil.boot_time())
 
+def kill_processes(process_name):
+    for proc in psutil.process_iter(['name', 'pid']):
+        try:
+            if proc.info['name'].lower() == process_name.lower():
+                try:
+                    proc.terminate()
+                except psutil.NoSuchProcess:
+                    pass
+                except Exception as e:
+                    raise e
+                
+                # Wait for the process to exit
+                proc.wait(timeout=1)
+        
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+
+
 def initHwndObserver():
+    os.system("taskkill /f /im cbt_client.exe")
+    kill_processes("cbt_client.exe")
     global observerDll
     dllPath = os.path.join(os.path.dirname(__file__), 'hwndObserver.dll')
     observerDll = cdll.LoadLibrary(dllPath)

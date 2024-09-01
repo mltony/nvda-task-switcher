@@ -3,6 +3,8 @@
 #include <windows.h>
 
 #define HWND_OBSERVER_WINDOW_CLASS "HWNDObserverInvisibleWindowClass"
+#define CBT_CLIENT_WINDOW_CLASS_PREFIX L"CBTClientInvisibleWindowClass_"
+
 #define WM_CBT_ACTIVATE_MSG (WM_USER+0)
 #define WM_CBT_FOCUS_MSG (WM_USER+1)
 #define WM_CBT_CREATE_WINDOW_MSG (WM_USER+2)

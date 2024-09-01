@@ -63,6 +63,7 @@ using nlohmann::json;
     {}
 #endif
 #define MAX_BUFFER_SIZE 1024
+#define MAX_CBT_RESTART_COUNT 10
 
 class CBTException : public std::exception {
   private:
@@ -76,11 +77,52 @@ class CBTException : public std::exception {
     }
 };
 
+std::wstring string_to_wide_string(const std::string& string)
+{
+    if (string.empty())
+    {
+        return L"";
+    }
+
+    const auto size_needed = MultiByteToWideChar(CP_UTF8, 0, string.data(), (int)string.size(), nullptr, 0);
+    if (size_needed <= 0)
+    {
+        throw std::runtime_error("MultiByteToWideChar() failed: " + std::to_string(size_needed));
+    }
+
+    std::wstring result(size_needed, 0);
+    MultiByteToWideChar(CP_UTF8, 0, &string[0], (int)string.size(), &result[0], size_needed);
+    return result;
+}
+
+std::string wide_string_to_string(const std::wstring& wide_string)
+{
+    if (wide_string.empty())
+    {
+        return "";
+    }
+
+    const auto size_needed = WideCharToMultiByte(CP_UTF8, 0, wide_string.data(), (int)wide_string.size(), nullptr, 0, nullptr, nullptr);
+    if (size_needed <= 0)
+    {
+        throw std::runtime_error("WideCharToMultiByte() failed: " + std::to_string(size_needed));
+    }
+
+    std::string result(size_needed, 0);
+    WideCharToMultiByte(CP_UTF8, 0, &wide_string[0], (int)wide_string.size(), &result[0], size_needed, nullptr, nullptr);
+    return result;
+}
+
 
 std::wstring_convert<std::codecvt_utf8<wchar_t>> CONVERTER;
 const std::string REQ_PROCESS_FILTER("process_filter");
 const std::string BOOT_TIME_COMMAND = "Wmic os get lastbootuptime";
-const std::vector<std::string> arches = {"Win32", "x64" };
+const std::vector<std::string> arches = {
+    //"Win32", 
+    "x64",
+};
+std::unordered_map<std::string, std::thread> cbtClientMonitoringThreads;
+std::unordered_map<std::string, size_t> restartCountByArch;
 std::wstring dllPath;
 HINSTANCE hInstance = nullptr;
 HWND invisibleHwnd = nullptr;
@@ -91,6 +133,7 @@ std::unique_ptr<std::thread> cacheDumpThread;
 std::mutex cacheMtx;
 HANDLE hEvent = nullptr;
 volatile bool cacheDumpThreadTerminateSignal = false;
+volatile bool cbtClientTerminateSignal = false;
 
 UINT64 getTimestamp()
 {
@@ -343,6 +386,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_CBT_CREATE_WINDOW_MSG:
         //mylog("WM_CBT_CREATE_WINDOW_MSG HWND=%lu t=%llu", (UINT32)(DWORD)targetHwnd, (UINT64)timestamp);
         //MessageBeep(0xFFFFFFFF);        
+        //Beep(500, 50);
         {
             std::lock_guard<std::mutex> guard(cacheMtx);
             hwndCache.hwndTimes[(DWORD)targetHwnd] = timestamp;
@@ -426,8 +470,155 @@ std::tuple< HANDLE, HANDLE> createPipe()
     return std::make_tuple(g_hChildStd_IN_Rd, g_hChildStd_IN_Wr);
 }
 
-bool spawnCbtClient(InitRequestData& data, const std::string& arch)
+HWND findCBTClientWindow(const std::string& arch) {
+    std::wstring cls = CBT_CLIENT_WINDOW_CLASS_PREFIX;
+    //cls += CONVERTER.from_bytes(arch);
+    cls += string_to_wide_string(arch);
+    HWND hwnd = FindWindow(cls.c_str(), NULL);
+    return hwnd;
+}
+std::tuple<DWORD, HANDLE> spawnCbtClient(const std::string& arch, bool initialStart=true)
 {
+    // Don't throw any exceptions in this func!
+    // For some reason when it is running from another thread, any exception will crash the whole app.
+    // I just love C++.
+    mylog("SP2 start");
+    
+    if (findCBTClientWindow(arch) != nullptr) {
+        mylog("SP: CBT window already exists for arch %s", arch.c_str());
+        std::string errorMsg = "CBT client window for arch " + arch + " already exists. Previous cbt_client must not have terminated properly.";
+        //throw CBTException(errorMsg);
+        //throw std::exception();
+        return std::make_tuple(0, nullptr);
+    }
+    mylog("SP: CBT window doesn't exist for arch %s", arch.c_str());
+
+    std::wstring clientPath(dllPath);
+    std::size_t pos = clientPath.rfind(L"\\");
+    clientPath.resize(pos + 1);
+    //clientPath += CONVERTER.from_bytes(arch);
+    clientPath += string_to_wide_string(arch);
+    
+    clientPath += L"\\";
+    clientPath += L"cbt_client.exe";
+    //mylog("Launching: %s", CONVERTER.to_bytes(clientPath).c_str());
+    mylog("Launching: %s", wide_string_to_string(clientPath).c_str());
+    
+    wchar_t* command = _wcsdup(clientPath.c_str());
+    STARTUPINFOW si = { 0 };
+    si.cb = sizeof(STARTUPINFOW);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+
+    // Process information
+    PROCESS_INFORMATION pi = { 0 };
+
+    mylog("SP created si pi now calling CreateProcess");
+
+    // Create the process
+    if (!CreateProcess(NULL, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        mylog("SP: CreateProcess failed; will throw");
+        if (false && !initialStart) {
+            mylog("CSTF checkpoint error");
+            //throw CBTException("CSTF checkpoint");
+            return std::make_pair(0, nullptr);
+        }            DWORD errorCode = GetLastError();
+        std::string errorMsg = "CBT process creation failed: error code ";
+        errorMsg += std::to_string(errorCode);
+        //throw CBTException(errorMsg);
+        return std::make_tuple(pi.dwProcessId, pi.hProcess);
+    }
+    mylog("SP: CreateProcess succeeded");
+
+    if (false && !initialStart) {
+        mylog("CSTF checkpoint good");
+        //throw CBTException("CSTF checkpoint");
+        return std::make_pair(0, nullptr);
+    }        
+    free(command);
+    CloseHandle(pi.hThread);
+    mylog("SP: waiting for CBT window to appear....");
+    for (size_t i = 0; i < 20; i++) {
+        Sleep(100);
+        HWND hwnd = findCBTClientWindow(arch);
+        if (hwnd != nullptr) {
+            mylog("SP: Success!!! hwnd=%lld, pid=%lld, hProcess=%lld", (long long)hwnd, (long long)pi.dwProcessId, (long long)pi.hProcess);
+            DWORD waitResult = WaitForSingleObject(pi.hProcess, 0);
+            if (waitResult == WAIT_TIMEOUT) {
+                mylog("SP: process alive!");
+            }
+            else {
+                mylog("SP: process dead!");
+            }
+            return std::make_tuple(pi.dwProcessId, pi.hProcess);
+        }
+    }
+    mylog("SP: timed out waiting for CBT window to appear. Will thro.");
+    std::string errorMsg = "CBT client failed to start up: CBT window didn't appear after time out of 2000 ms. arch = " + arch;
+    //throw CBTException(errorMsg);
+    return std::make_tuple(0, nullptr);
+}
+
+void cbtClientSpawnerThreadFunc(const std::string arch, size_t* restartCountPtr, HANDLE hProcessInitial)
+{
+    HANDLE hProcess = hProcessInitial;
+    size_t& restartCount = *restartCountPtr;
+    while (true) {
+        mylog("CSTF loop");
+        WaitForSingleObject(hProcess, INFINITE);
+        mylog("CSTF wait finished, hProcess=%lld", (long long)hProcess);
+        DWORD waitResult = WaitForSingleObject(hProcess, 0);
+        if (waitResult == WAIT_TIMEOUT) {
+            mylog("CSTF: process alive!");
+        }
+        else {
+            mylog("CSTF: process dead!");
+        }        CloseHandle(hProcess);
+        mylog("CSTF closed handle");
+        hProcess = nullptr;
+        restartCount += 1;
+        mylog("CSTF restartCnt=%d", (int)restartCount);
+        if (cbtClientTerminateSignal || (restartCount >= MAX_CBT_RESTART_COUNT)) {
+            mylog("CSTF: Terminating CBT client spawner watchdog for arch %s", arch.c_str());
+            return; 
+        }
+        std::tuple<DWORD, HANDLE> process;
+        mylog("CSTF About to spawn again");
+        
+            try {
+                process = spawnCbtClient(arch, false);
+                mylog("CSTF spawn successful");
+                hProcess = std::get<1>(process);
+                mylog("CSTF hProcess=%lld", (long long)hProcess);
+            }
+            catch (const std::exception& e) {
+                mylog("CSTF failed - exiting. arch=%s, restartCnt=%d, error=%s", arch, (int)restartCount, e.what());
+                return;
+            }
+            catch (...) {
+                mylog("CSTF failed - exiting. arch=%s, restartCnt=%d, error=unknown", arch, (int)restartCount);
+                return;
+            }
+    }
+}
+
+bool spawnCbtClientAndMonitor(InitRequestData& data, const std::string& arch)
+{
+    //std::tuple<DWORD, HANDLE> process = spawnCbtClient(arch);
+    //DWORD processId = std::get<0>(process);
+    DWORD processId = 0;
+    data.processIds[arch] = processId;
+    //HANDLE hProcess = std::get<1>(process);
+    HANDLE hProcess = nullptr;
+    size_t& restartCount = restartCountByArch[arch];
+    std::thread thread(cbtClientSpawnerThreadFunc, arch, &restartCount, hProcess);
+    cbtClientMonitoringThreads[arch] = std::move(thread);
+    return true;
+}
+
+bool spawnCbtClientOld(InitRequestData& data, const std::string& arch)
+{
+    // This old version tries to communicate to stdin of the child process.
+    // This overcomplicates things and suspect causes CBT client crash.
     mylog("SP start");
     std::wstring clientPath(dllPath);
     std::size_t pos = clientPath.rfind(L"\\");
@@ -475,6 +666,26 @@ bool spawnCbtClient(InitRequestData& data, const std::string& arch)
 
 DWORD killCbtClient(std::string arch)
 {
+    HWND hwnd = findCBTClientWindow(arch);
+    if (hwnd == nullptr) {
+        std::string errorMsg = "Cannot find window for arch " + arch + " to terminate cbt client for arch " + arch;
+        throw CBTException(errorMsg);
+    }
+    PostMessage(hwnd, WM_HWND_OBSERVER_DESTROY_WINDOW, 0, 0);
+    Sleep(1000);
+    hwnd = findCBTClientWindow(arch);
+    if (hwnd == NULL) {
+        mylog("asdf kill success!");
+        return 0;
+    }
+    else {
+        mylog("asdf kill failiure!");
+        return 1;
+    }
+}
+
+DWORD killCbtClientOld(std::string arch)
+{
     HANDLE g_hChildStd_IN_Wr = processHandles[arch];
     const char* inputText = "quit";
     DWORD dwWritten;
@@ -520,7 +731,7 @@ json init(json& request)
     
     for (std::string arch : arches) {
         mylog("init: loading arch %s", arch.c_str());
-        if (!spawnCbtClient(data, arch)) {
+        if (!spawnCbtClientAndMonitor(data, arch)) {
             mylog("spawnCbtClient failed!");
             return data;
         }
@@ -703,6 +914,8 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
 
 json queryHwndsImpl(json &request)
 {
+    MessageBeep(0xFFFFFFFF);
+    Beep(500, 50);    
     mylog("queryHwndsImpl");
     RequestData data;
     data.timestamp = getTimestamp();
@@ -808,10 +1021,10 @@ BOOL APIENTRY DllMain( HMODULE hModule,
         {
             #ifdef MYDEBUG
                 FILE* df = nullptr;
-                if (fopen_s(&df, DF_NAME, "w") != 0) {
-                    // ?
-                }
-                fclose(df);
+                //if (fopen_s(&df, DF_NAME, "w") != 0) {
+                //    // ?
+                //}
+                //fclose(df);
             #endif
             std::wstring wPath;
             wPath.resize(MAX_BUFFER_SIZE);
