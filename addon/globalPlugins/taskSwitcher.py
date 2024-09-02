@@ -1126,3 +1126,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             ui.message(_("%d windows shown") % n)
         core.callLater(100, delayedSpeak)
         self.hiddenWindows = []
+
+    @script(description=_("Print health check."), gestures=['kb:NVDA+control+f11'])
+    def script_printHealthCheck(self, gesture):
+        z = queryObserver("healthCheck")
+        api.z = z['result']
+        log.info(z['result'])
+        tones.beep(500, 50)

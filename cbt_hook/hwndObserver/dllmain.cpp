@@ -22,6 +22,7 @@
 #include "cbt_hook.h"
 #include <algorithm>
 #include <stdexcept>
+#include <ctime>
 
 using nlohmann::json;
 
@@ -122,7 +123,13 @@ const std::vector<std::string> arches = {
     "x64",
 };
 std::unordered_map<std::string, std::thread> cbtClientMonitoringThreads;
+
+std::mutex watchdogMtx;
 std::unordered_map<std::string, size_t> restartCountByArch;
+std::unordered_map<std::string, DWORD> processIDByArch;
+//std::unordered_map<std::string, std::time_t> timestampByArch;
+std::time_t creationTimestamp = 0;
+
 std::wstring dllPath;
 HINSTANCE hInstance = nullptr;
 HWND invisibleHwnd = nullptr;
@@ -141,6 +148,33 @@ UINT64 getTimestamp()
     auto elapsed = now - std::chrono::high_resolution_clock::time_point{};
     std::uint64_t timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
     return timestamp;
+}
+
+bool IsProcessRunning(DWORD pid)
+
+{
+    // Attempt to open the process with the given PID
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+    if (hProcess == NULL)
+    {
+        // If the handle is NULL, the process does not exist
+        return false;
+    }
+
+    DWORD exitCode;
+    if (GetExitCodeProcess(hProcess, &exitCode))
+    {
+        // If the exit code is STILL_ACTIVE, the process is running
+        if (exitCode == STILL_ACTIVE)
+        {
+            CloseHandle(hProcess);
+            return true;
+        }
+    }
+
+    // Close the handle as it is no longer needed
+    CloseHandle(hProcess);
+    return false;
 }
 
 struct RequestData {
@@ -395,6 +429,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             std::string msg = "SetEvent failed; error " + std::to_string(GetLastError());
             mylog(msg.c_str());
         }
+        {
+            creationTimestamp = std::time(nullptr);
+        }
         return 0;
     case WM_CBT_DESTROY_WINDOW_MSG:
         //mylog("WM_CBT_DESTROY_WINDOW_MSG");
@@ -558,10 +595,9 @@ std::tuple<DWORD, HANDLE> spawnCbtClient(const std::string& arch, bool initialSt
     return std::make_tuple(0, nullptr);
 }
 
-void cbtClientSpawnerThreadFunc(const std::string arch, size_t* restartCountPtr, HANDLE hProcessInitial)
+void cbtClientSpawnerThreadFunc(const std::string arch, HANDLE hProcessInitial)
 {
     HANDLE hProcess = hProcessInitial;
-    size_t& restartCount = *restartCountPtr;
     while (true) {
         mylog("CSTF loop");
         WaitForSingleObject(hProcess, INFINITE);
@@ -575,7 +611,12 @@ void cbtClientSpawnerThreadFunc(const std::string arch, size_t* restartCountPtr,
         }        CloseHandle(hProcess);
         mylog("CSTF closed handle");
         hProcess = nullptr;
-        restartCount += 1;
+        size_t restartCount;
+        {
+            std::lock_guard<std::mutex> guard(watchdogMtx);
+            restartCount = restartCountByArch[arch] += 1;
+            processIDByArch[arch] = 0;
+        }
         mylog("CSTF restartCnt=%d", (int)restartCount);
         if (cbtClientTerminateSignal || (restartCount >= MAX_CBT_RESTART_COUNT)) {
             mylog("CSTF: Terminating CBT client spawner watchdog for arch %s", arch.c_str());
@@ -598,6 +639,10 @@ void cbtClientSpawnerThreadFunc(const std::string arch, size_t* restartCountPtr,
                 mylog("CSTF failed - exiting. arch=%s, restartCnt=%d, error=unknown", arch, (int)restartCount);
                 return;
             }
+        {
+            std::lock_guard<std::mutex> guard(watchdogMtx);
+            processIDByArch[arch] = std::get<0>(process);
+        }
     }
 }
 
@@ -609,8 +654,8 @@ bool spawnCbtClientAndMonitor(InitRequestData& data, const std::string& arch)
     data.processIds[arch] = processId;
     //HANDLE hProcess = std::get<1>(process);
     HANDLE hProcess = nullptr;
-    size_t& restartCount = restartCountByArch[arch];
-    std::thread thread(cbtClientSpawnerThreadFunc, arch, &restartCount, hProcess);
+    //size_t& restartCount = restartCountByArch[arch];
+    std::thread thread(cbtClientSpawnerThreadFunc, arch, hProcess);
     cbtClientMonitoringThreads[arch] = std::move(thread);
     return true;
 }
@@ -674,14 +719,18 @@ DWORD killCbtClient(std::string arch)
     PostMessage(hwnd, WM_HWND_OBSERVER_DESTROY_WINDOW, 0, 0);
     Sleep(1000);
     hwnd = findCBTClientWindow(arch);
-    if (hwnd == NULL) {
-        mylog("asdf kill success!");
+    bool isWindowFound = (hwnd != nullptr);
+    bool isProcessAlive;
+    {
+        std::lock_guard<std::mutex> guard(watchdogMtx);
+        isProcessAlive = IsProcessRunning(processIDByArch[arch]);
+    }
+    mylog("asdf kill status arch=%s isProcessAlive=%d isWindowFound=%d", arch.c_str(), (int)isProcessAlive, (int)isWindowFound);
+    if ((!isProcessAlive) && (!isWindowFound)){
         return 0;
     }
-    else {
-        mylog("asdf kill failiure!");
-        return 1;
-    }
+    mylog("asdf kill failiure!");
+    return 1;
 }
 
 DWORD killCbtClientOld(std::string arch)
@@ -958,6 +1007,34 @@ json updateTimestamps(json& request)
     return json({});
 }
 
+json healthCheck(json& request)
+{
+    std::ostringstream oss;
+    auto deltaSec = std::time(nullptr) - creationTimestamp;
+    oss << "dt=" << deltaSec << "sec\n";
+    for (auto arch : arches) {
+        oss << "[" << arch << "]\n";
+        size_t restartCount;
+        DWORD processID;
+        {
+            std::lock_guard<std::mutex> guard(watchdogMtx);
+            restartCount = restartCountByArch[arch];
+            processID = processIDByArch[arch];
+        }
+        bool windowFound = findCBTClientWindow(arch) != nullptr;
+        bool threadRunning = cbtClientMonitoringThreads[arch].joinable();
+        bool isProcessRunning = IsProcessRunning(processID);
+        oss << "  processID=" << processID << std::endl;
+        oss << "  isWindowFound=" << windowFound << std::endl;
+        oss << "  isProcessRunning=" << isProcessRunning << std::endl;
+        oss << "  isThreadRunning=" << threadRunning << std::endl;
+        oss << "  restartCount=" << restartCount << std::endl;
+    }
+    std::string result = oss.str();
+    json jsonResult = { {"result", result} };
+    return jsonResult;
+}
+
 extern "C" __declspec(dllexport) char* queryHwnds(char* request)
 {
     mylog("Request received");
@@ -985,6 +1062,9 @@ extern "C" __declspec(dllexport) char* queryHwnds(char* request)
         }
         else if (command == "updateTimestamps") {
             responseJson = updateTimestamps(requestJson);
+        }
+        else if (command == "healthCheck") {
+            responseJson = healthCheck(requestJson);
         }
         else {
             responseJson = { {"error", "Unknown command"} };
