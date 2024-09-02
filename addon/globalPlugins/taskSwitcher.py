@@ -71,6 +71,7 @@ from ctypes import cdll, c_void_p, c_wchar_p, c_char_p
 import subprocess
 import NVDAObjects
 import psutil
+from enum import IntEnum
 
 try:
     REASON_CARET = controlTypes.REASON_CARET
@@ -99,6 +100,14 @@ else:
 def myAssert(condition):
     if not condition:
         raise RuntimeError("Assertion failed")
+
+class CBTState(IntEnum):
+    NOT_STARTED = 0
+    INITIALIZING = 1
+    RUNNING = 2
+    TERMINATED = 3
+
+cbtState = CBTState.NOT_STARTED
 
 module = "taskSwitcher"
 def initConfiguration():
@@ -263,6 +272,10 @@ def saveConfig():
 
 observerDll = None
 def queryObserver(command, **kwargs):
+    if command == 'init':
+        assert cbtState == CBTState.INITIALIZING
+    else:
+        assert cbtState == CBTState.RUNNING, "Task switcher CBT hasn't initialized yet"
     request = {
         **{
             "command": command,
@@ -321,7 +334,12 @@ def kill_processes(process_name):
 
 
 def initHwndObserver():
-    os.system("taskkill /f /im cbt_client.exe")
+    global cbtState
+    assert cbtState == CBTState.NOT_STARTED
+    cbtState = CBTState.INITIALIZING
+    tones.beep(500, 50)
+    # calling taskkill causes NVDA exception for some reason
+    #os.system("taskkill /f /im cbt_client.exe")
     kill_processes("cbt_client.exe")
     global observerDll
     dllPath = os.path.join(os.path.dirname(__file__), 'hwndObserver.dll')
@@ -334,11 +352,19 @@ def initHwndObserver():
     cacheFileName = os.path.expandvars(getConfig("observerCacheFile"))
     bootupTime = getBootupTime2()
     queryObserver("init", cacheFileName=cacheFileName, bootupTime=bootupTime)
+    cbtState = CBTState.RUNNING
+
+def initHwndObserverAsync():
+    #core.callLater(10000, initHwndObserver)
+    initHwndObserver()
 
 def destroyHwndObserver():
+    global cbtState
+    assert cbtState == CBTState.RUNNING
     queryObserver("terminate")
     global observerDll
     observerDll = None
+    cbtState = CBTState.TERMINATED
 
 addonHandler.initTranslation()
 initConfiguration()
@@ -865,7 +891,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.createMenu()
         self.injectHooks()
         self.beeper = Beeper()
-        initHwndObserver()
+        initHwndObserverAsync()
         loadConfig()
         self.lastEntry = None
         self.lastGestureCounter = 0

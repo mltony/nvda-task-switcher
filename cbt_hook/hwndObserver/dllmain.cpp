@@ -704,7 +704,6 @@ json init(json& request)
 {
     mylog("init");
     InitRequestData data;
-    
     if (!request.contains("cacheFileName")) {
         data.error = "cacheFileName not specified";
         return data;
