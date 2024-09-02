@@ -92,8 +92,10 @@ int main(int argc, char** argv)
 
         if (msg.message == WM_HWND_OBSERVER_DESTROY_WINDOW)
         {
-            // Handle shutdown request
+            //MessageBeep(0xFFFFFFFF);        
+            //Beep(500, 50);            // Handle shutdown request
             PostQuitMessage(0);
+            return 0;
         }
     }
 

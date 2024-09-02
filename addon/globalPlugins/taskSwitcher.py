@@ -337,7 +337,6 @@ def initHwndObserver():
     global cbtState
     assert cbtState == CBTState.NOT_STARTED
     cbtState = CBTState.INITIALIZING
-    tones.beep(500, 50)
     # calling taskkill causes NVDA exception for some reason
     #os.system("taskkill /f /im cbt_client.exe")
     kill_processes("cbt_client.exe")

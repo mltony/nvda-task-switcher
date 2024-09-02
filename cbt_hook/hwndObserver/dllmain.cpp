@@ -26,16 +26,16 @@
 
 using nlohmann::json;
 
+std::wstring logFileName;
+
 #define MYDEBUG
 #ifdef MYDEBUG
     std::mutex mylogMtx;
-    #define DF_NAME "H:\\od\\2.txt"
+    //#define DF_NAME "H:\\od\\2.txt"
     FILE* openDebugLog() 
     {
         FILE* df = nullptr;
-        if (fopen_s(&df, DF_NAME, "a") != 0) {
-            return nullptr;
-        }
+        _wfopen_s(&df, logFileName.c_str(), L"a");
         return df;
     }
     void inline mylog(const char* format, ...)
@@ -617,7 +617,7 @@ void cbtClientSpawnerThreadFunc(const std::string arch, HANDLE hProcessInitial)
             restartCount = restartCountByArch[arch] += 1;
             processIDByArch[arch] = 0;
         }
-        mylog("CSTF restartCnt=%d", (int)restartCount);
+        mylog("CSTF restartCnt=%d, cbtClientTerminateSignal=%d", (int)restartCount, (int)cbtClientTerminateSignal);
         if (cbtClientTerminateSignal || (restartCount >= MAX_CBT_RESTART_COUNT)) {
             mylog("CSTF: Terminating CBT client spawner watchdog for arch %s", arch.c_str());
             return; 
@@ -711,21 +711,30 @@ bool spawnCbtClientOld(InitRequestData& data, const std::string& arch)
 
 DWORD killCbtClient(std::string arch)
 {
+    mylog("Kill %s start", arch.c_str());
     HWND hwnd = findCBTClientWindow(arch);
     if (hwnd == nullptr) {
         std::string errorMsg = "Cannot find window for arch " + arch + " to terminate cbt client for arch " + arch;
         throw CBTException(errorMsg);
     }
     PostMessage(hwnd, WM_HWND_OBSERVER_DESTROY_WINDOW, 0, 0);
-    Sleep(1000);
+
+    bool isWindowFound = true, isProcessAlive = true;
+    size_t i = 0;
+    for (i = 0; i < 20; i++) {
+    Sleep(100);
     hwnd = findCBTClientWindow(arch);
-    bool isWindowFound = (hwnd != nullptr);
-    bool isProcessAlive;
-    {
-        std::lock_guard<std::mutex> guard(watchdogMtx);
-        isProcessAlive = IsProcessRunning(processIDByArch[arch]);
+        isWindowFound = (hwnd != nullptr);
+        {
+            std::lock_guard<std::mutex> guard(watchdogMtx);
+            isProcessAlive = IsProcessRunning(processIDByArch[arch]);
+        }
+        if ((!isProcessAlive) && (!isWindowFound)) {
+            break;
+        }
     }
-    mylog("asdf kill status arch=%s isProcessAlive=%d isWindowFound=%d", arch.c_str(), (int)isProcessAlive, (int)isWindowFound);
+
+    mylog("kill status arch=%s i=%d isProcessAlive=%d isWindowFound=%d", arch.c_str(), (int)i, (int)isProcessAlive, (int)isWindowFound);
     if ((!isProcessAlive) && (!isWindowFound)){
         return 0;
     }
@@ -791,6 +800,7 @@ json init(json& request)
 json terminate(json& request)
 {
     mylog("Terminate");
+    cbtClientTerminateSignal = true;
     json result;
     mylog("Terminate: killing cbt clients");
     for (std::string arch : arches) {
@@ -962,8 +972,8 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
 
 json queryHwndsImpl(json &request)
 {
-    MessageBeep(0xFFFFFFFF);
-    Beep(500, 50);    
+    //MessageBeep(0xFFFFFFFF);
+    //Beep(500, 50);    
     mylog("queryHwndsImpl");
     RequestData data;
     data.timestamp = getTimestamp();
@@ -1098,19 +1108,29 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     case DLL_PROCESS_ATTACH:
         hInstance = hModule;
         {
-            #ifdef MYDEBUG
-                FILE* df = nullptr;
-                //if (fopen_s(&df, DF_NAME, "w") != 0) {
-                //    // ?
-                //}
-                //fclose(df);
-            #endif
             std::wstring wPath;
             wPath.resize(MAX_BUFFER_SIZE);
             //DWORD size = GetModuleFileNameEx((HMODULE)hModule, NULL, &wPath[0], MAX_BUFFER_SIZE); // WTF this doesn't work!?
             DWORD size = GetModuleFileName((HMODULE)hModule, &wPath[0], MAX_BUFFER_SIZE);
             wPath.resize(size);
             DWORD code = GetLastError();
+
+            #ifdef MYDEBUG
+                std::wstring path(wPath);
+                std::size_t pos = path.rfind(L"\\");
+                path.resize(pos + 1);
+                std::wstring oldLog = path + L"observer.log.old";
+                DeleteFile(oldLog.c_str());
+                // Don't care if error
+                std::wstring currentLog = path + L"observer.log";
+                MoveFile(currentLog.c_str(), oldLog.c_str());
+                logFileName = currentLog;
+                // Don't care if error
+
+                FILE* df = nullptr;
+                _wfopen_s(&df, logFileName.c_str(), L"w");
+                fclose(df);
+            #endif
             mylog("hModule=  %lu, Size = %lu, code = %lu", (DWORD)hModule, size, code);
             std::string sPath = CONVERTER.to_bytes(wPath);
             mylog("wPath %s", sPath.c_str());
