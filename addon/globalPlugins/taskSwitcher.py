@@ -799,7 +799,7 @@ class ReorderWindowsDialog(
         title=_("Rearrange windows for %s") % appName
         super().__init__(parent,title=title)
         self.appName = appName
-        self.hwnds = queryHwnds(appName)
+        self.hwnds = fetchTitles(queryHwnds(appName))
         mainSizer=wx.BoxSizer(wx.VERTICAL)
         sHelper = guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
       # windows table
@@ -882,6 +882,24 @@ def openReorderDialog(appName):
     if dialog.ShowModal()==wx.ID_OK:
         pass
 
+
+def fetchTitles(hwnds):
+    for d in hwnds:
+        # For some apps, like Google Chrome, GetWindowText returns incorrect title.
+        # Thatt is not the title reported by NVDA+T command.
+        # Trying to retrieve more accurate title via IA2.
+        name = None
+        try:
+            obj = NVDAObjects.IAccessible.getNVDAObjectFromEvent(d['hwnd'], winUser.OBJID_CLIENT, 0)
+            name = obj.name
+        except KeyError:
+            pass
+        if name is None:
+            name = winUser.getWindowText(d['hwnd'])
+        if name is not None:
+            d['title'] = name
+    return hwnds
+    
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     scriptCategory = _("Task Switcher")
 
@@ -1011,21 +1029,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 for hwnd in hwnds
                 if hwnd['path'].lower() == entry.appPath.lower()
             ]
-        for d in hwnds:
-            # For some apps, like Google Chrome, GetWindowText returns incorrect title.
-            # Thatt is not the title reported by NVDA+T command.
-            # Trying to retrieve more accurate title via IA2.
-            name = None
-            try:
-                obj = NVDAObjects.IAccessible.getNVDAObjectFromEvent(d['hwnd'], winUser.OBJID_CLIENT, 0)
-                name = obj.name
-            except KeyError:
-                pass
-            if name is None:
-                name = winUser.getWindowText(d['hwnd'])
-            if name is not None:
-                d['title'] = name
+        
         if entry.pattern:
+            hwnds = fetchTitles(hwnds)
             regex = re.compile(entry.pattern)
             hwnds = [
                 hwnd
@@ -1129,6 +1135,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     @script(description=_("Print health check."), gestures=['kb:NVDA+control+f11'])
     def script_printHealthCheck(self, gesture):
         z = queryObserver("healthCheck")
-        api.z = z['result']
+        #api.z = z['result']
         log.info(z['result'])
         tones.beep(500, 50)
