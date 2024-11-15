@@ -56,18 +56,22 @@ static LRESULT CALLBACK CBTProc(int nCode, WPARAM wParam, LPARAM lParam)
     return CallNextHookEx(g_hCBTHook, nCode, wParam, lParam);
 }
 
-DLL_EXPORT  bool InstallCBTHook(HWND hNotifyWnd)
+DLL_EXPORT  DWORD InstallCBTHook(HWND hNotifyWnd)
 {
     g_hNotifyWnd = hNotifyWnd;
+    if (g_hCBTHook){
+        UninstallCBTHook();
+        // this sets g_hCBTHook = nullptr;
+        // Ignore any errors
+    }
 
-    if (!g_hCBTHook)
-    {
+    if (!g_hCBTHook) {
         g_hCBTHook = SetWindowsHookEx(WH_CBT, (HOOKPROC)CBTProc, g_hInstance, 0);
 
         if (g_hCBTHook)
         {
             OutputDebugStringA("Hook CBT succeed\n");
-            return true;
+            return 0;
         }
         else
         {
@@ -75,10 +79,11 @@ DLL_EXPORT  bool InstallCBTHook(HWND hNotifyWnd)
             char szError[MAX_PATH];
             _snprintf_s(szError, MAX_PATH, "Hook CBT failed, error = %u\n", dwError);
             OutputDebugStringA(szError);
+            return dwError;
         }
     }
 
-    return false;
+    return -1;
 }
 
 DLL_EXPORT bool UninstallCBTHook()

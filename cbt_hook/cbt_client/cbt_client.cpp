@@ -42,9 +42,9 @@ int main(int argc, char** argv)
         std::cerr << "Error: Cannot find target window" << std::endl;
         return 1;
     }
-    bool result = InstallCBTHook(hwnd);
-    if (!result) {
-        std::cerr << "Error: Installing CBT hook failed!" << std::endl;
+    DWORD code = InstallCBTHook(hwnd);
+    if (code != 0) {
+        std::cerr << "Error: Installing CBT hook failed! error code " << code << std::endl;
         return 1;
     }
     std::cout << "Successfully installed CBT hook! Press enter to quit." << std::endl;

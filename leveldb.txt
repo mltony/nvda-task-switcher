@@ -1,0 +1,7 @@
+Build instructions for LevelDB
+choco install cmake /y
+git clone https://github.com/google/leveldb --recursive
+cd leveldb
+mkdir build
+cd build
+"C:\Program Files\CMake\bin\cmake" -G "Visual Studio 17 2022" -A Win32  .. >out.txt 2>&1

@@ -17,5 +17,5 @@
 #define DLL_EXPORT __declspec(dllimport)
 #endif
 
-DLL_EXPORT  bool InstallCBTHook(HWND hNotifyWnd);
+DLL_EXPORT  DWORD InstallCBTHook(HWND hNotifyWnd);
 DLL_EXPORT bool UninstallCBTHook();
