@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <ctime>
+#include <leveldb/db.h>
 
 using nlohmann::json;
 
@@ -135,11 +136,6 @@ HINSTANCE hInstance = nullptr;
 HWND invisibleHwnd = nullptr;
 std::unique_ptr<std::thread> windowThread;
 std::unordered_map<std::string, HANDLE> processHandles;
-std::string cacheFileName;
-std::unique_ptr<std::thread> cacheDumpThread;
-std::mutex cacheMtx;
-HANDLE hEvent = nullptr;
-volatile bool cacheDumpThreadTerminateSignal = false;
 volatile bool cbtClientTerminateSignal = false;
 
 UINT64 getTimestamp()
@@ -201,24 +197,15 @@ void to_json(json& j, const InitRequestData& data) {
     };
 }
 
-struct HwndCache {
-    std::string bootTime;
-    std::unordered_map<UINT32, UINT64> hwndTimes;
-};
+std::unique_ptr< leveldb::DB> hwndCache;
+leveldb::WriteOptions writeOptions;
+leveldb::ReadOptions readOptions;
+std::string keyBootTime = "bootTime";
+std::string hwndTimestampPrefix = "ht";
+std::string timestampKey(DWORD hwnd) {
+    return hwndTimestampPrefix + std::to_string(hwnd);
 
-HwndCache hwndCache;
-void to_json(json& j, const HwndCache& data) {
-    j = json{
-        {"bootTime", data.bootTime},
-        {"hwndTimes", data.hwndTimes},
-    };
 }
-
-void from_json(const json& j, HwndCache& cache) {
-    j.at("bootTime").get_to(cache.bootTime);
-    j.at("hwndTimes").get_to(cache.hwndTimes);
-}
-
 
 std::wstring toLowerCase(const std::wstring& str) {
     std::wstring result = str;
@@ -246,6 +233,7 @@ std::string dumpCache(std::string &fileName)
 {
     // mutex must be acquired from calling function!
     //std::lock_guard<std::mutex> guard(cacheMtx);
+    /*
     std::string tmpFileName = fileName + ".tmp";
     std::remove(tmpFileName.c_str()); // Don't care whether succeeds
     {
@@ -261,6 +249,7 @@ std::string dumpCache(std::string &fileName)
     std::remove(fileName.c_str());
     std::rename(tmpFileName.c_str(), fileName.c_str());
     std::remove(tmpFileName.c_str());
+    */
     return "";
 }
 
@@ -268,9 +257,10 @@ void updateCache(std::unordered_set<UINT32>& allHwnds, UINT64 defaultTimestamp)
 {
     // Lock must be acquired by a calling function.
     //std::lock_guard<std::mutex> guard(cacheMtx);
+    /*
     auto& hwndTimes = hwndCache.hwndTimes;
     // 1. Drop all hwnds not found during EnumWindows run
-    for (auto it = hwndTimes.begin(); it != hwndTimes.end(); /* no increment */) {
+    for (auto it = hwndTimes.begin(); it != hwndTimes.end();) {
         UINT32 hwnd = it->first;
         if (allHwnds.find(hwnd) == allHwnds.end()) {
             it = hwndTimes.erase(it);
@@ -285,65 +275,41 @@ void updateCache(std::unordered_set<UINT32>& allHwnds, UINT64 defaultTimestamp)
             hwndTimes.emplace(*it, defaultTimestamp);
         }
     }
+    */
 }
 
-void cacheDumpThreadFunc(std::string fileName)
-{
-    mylog("CDTF:start");
-    while (true) {
-        DWORD code = WaitForSingleObject(hEvent, 10000);
-        if (code == WAIT_TIMEOUT) {
-            // whatever
-        }
-        if (cacheDumpThreadTerminateSignal) {
-            break;
-        }
-        mylog("CDTF:loop");
-        {
-            std::lock_guard<std::mutex> guard(cacheMtx);
-            std::string error = dumpCache(fileName);
-            if (!error.empty()) {
-                mylog("Error dumping cache: %s", error.c_str());
-            }
+bool deleteAllEntries() {
+    std::vector<std::string> keys;
+    leveldb::Iterator* it = hwndCache->NewIterator(readOptions);
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        keys.push_back(it->key().ToString());
+    }
+    for (const auto& key : keys) {
+        leveldb::Status s =hwndCache->Delete(writeOptions, key);
+        if (!s.ok()) {
+            return false;
         }
     }
-    mylog("CDTF:finish");
+    return true;
 }
 
 std::string loadCache(std::string &fileName, std::string &bootTime)
 {
-    std::lock_guard<std::mutex> guard(cacheMtx);
     mylog("Current boot time: %s", bootTime.c_str());
     if (bootTime.length() == 0) {
         mylog("Retrieved boot time is empty");
         return "Retrieved boot time is empty"; 
     }
     mylog("Loading cache from %s", fileName.c_str());
-    std::ifstream fin(fileName, std::ios::binary);
-    bool fileExists = fin.good();
-    if (!fileExists) {
-        mylog("Cache file not found - creating a blank cache.");
-        hwndCache = HwndCache();
-        hwndCache.bootTime = bootTime;
-        std::ofstream fout(fileName, std::ios::out | std::ios::binary);
-        if (!fout.is_open()) {
-            return "Cannot create cache file " + fileName;
-        }
+    leveldb::Options options;
+    options.create_if_missing = true;
+    leveldb::DB* db;
+    leveldb::Status status = leveldb::DB::Open(options, fileName, &db);    hwndCache.reset();
+    if (!status.ok()) {
+        return "Failed to open levelDB cache file " + fileName + " : " +  status.ToString();
     }
-    else {
-        mylog("Cache file exists - reading cache");
-        json j;
-        HwndCache loadedCache;
-        try {
-            fin >> j;
-            mylog("Loaded json object from cache file");
-            loadedCache = j;
-            mylog("Converted json object to cache instance");
-        }
-        catch (const json::parse_error& e) {
-            // Do nothing - will create a blank cache
-            mylog("JSON parse error!");
-        }
+    hwndCache.reset(db);
+    if (true) {
         mylog("Checking boot time");
         // Boot time is reported with up to second accuracy, so comparing difference
         INT64 uBootTime, uCacheBootTime;
@@ -353,81 +319,76 @@ std::string loadCache(std::string &fileName, std::string &bootTime)
         catch (std::invalid_argument& e) {
             return "Invalid boot time received from python: " + bootTime;
         }
+        std::string strCacheBootTime;
+        status = db->Get(readOptions, keyBootTime, &strCacheBootTime);
+        if (status.IsNotFound()) {
+            // Using current boot time received from Python and storing it - likely we just created a new cache file
+            strCacheBootTime = "0";
+        }
+        else if (!status.ok()) {
+            return "Failed to read timestamp from levelDB cache file " + fileName + " : " + status.ToString();
+        }
         try {
-            uCacheBootTime = std::stoull(loadedCache.bootTime);
+            uCacheBootTime = std::stoull(strCacheBootTime);
         }
         catch (std::invalid_argument& e) {
-            return "Invalid boot time read from cache on disk: " + loadedCache.bootTime;
+            return "Invalid boot time read from cache on disk: " + strCacheBootTime;
         }
         INT64 uBootTimeDiff = std::abs(uBootTime - uCacheBootTime);
         mylog("uBootTime =%lld, uCacheBootTime =%lld, uBootTimeDiff =%lld", uBootTime, uCacheBootTime, uBootTimeDiff);
         if (uBootTimeDiff < 5) {
             mylog("bootTime match within 5 seconds! Reusing cache.");
-            hwndCache = loadedCache;
         }
         else {
             mylog("bootTime mismatch! System must have been rebooted. Creating a blank cache.");
-            hwndCache = HwndCache();
-            hwndCache.bootTime = bootTime;
+            if (!deleteAllEntries()) {
+                return "deleteAllEntries failed!";
+            }
+            strCacheBootTime = bootTime;
+            status = db->Put(writeOptions, keyBootTime, strCacheBootTime);
+            if (!status.ok()) {
+                return "Failed to write timestamp to levelDB cache file " + fileName + " : " + status.ToString();
+            }
         }
     }
-
-    mylog("All done with cache.");
-    mylog("Creating event.");
-    hEvent = CreateEvent(NULL, FALSE, FALSE, L"cacheDumpThreadSignalEvent");
-    if (hEvent == NULL) {
-        std::string msg = "Create event failed; error = " + std::to_string(GetLastError());
-        return msg;
-    }
-    mylog("Launching cacheDumpThread");
-    cacheDumpThread = std::make_unique<std::thread>(cacheDumpThreadFunc, fileName);
     mylog("InitCache succeeded!");
     return "";
 }
 
-std::string terminateCache(std::string& fileName)
+std::string terminateCache()
 {
-    cacheDumpThreadTerminateSignal = true;
-    if (!SetEvent(hEvent)) {
-        std::string msg = "SetEvent failed; error " + std::to_string(GetLastError());
-        return msg;
-    }
-    cacheDumpThread->join();
-    cacheDumpThread = nullptr;
-    CloseHandle(hEvent);
-    std::string error = dumpCache(fileName);
-    return error;
+    hwndCache.reset();
+    return "";
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     HWND targetHwnd = (HWND)wParam;
     UINT64 timestamp = getTimestamp();
+    leveldb::Status s;
     switch (uMsg)
     {
     case WM_DESTROY:
-        mylog("WM_DESTROY");
+        mylog("WM_DESTROY received");
         PostQuitMessage(0);
         return 0;
     case WM_HWND_OBSERVER_DESTROY_WINDOW:
-        mylog("WM_HWND_OBSERVER_DESTROY_WINDOW; Calling DestroyWindow");
+        mylog("WM_HWND_OBSERVER_DESTROY_WINDOW received; Calling DestroyWindow");
         DestroyWindow(invisibleHwnd);
         invisibleHwnd = nullptr;
         return 0;
     case WM_CBT_ACTIVATE_MSG:
-        //mylog("WM_CBT_ACTIVATE_MSG");
+        //mylog("WM_CBT_ACTIVATE_MSG received");
         return 0;
     case WM_CBT_CREATE_WINDOW_MSG:
         //mylog("WM_CBT_CREATE_WINDOW_MSG HWND=%lu t=%llu", (UINT32)(DWORD)targetHwnd, (UINT64)timestamp);
         //MessageBeep(0xFFFFFFFF);        
         //Beep(500, 50);
         {
-            std::lock_guard<std::mutex> guard(cacheMtx);
-            hwndCache.hwndTimes[(DWORD)targetHwnd] = timestamp;
-        }
-        if (!SetEvent(hEvent)) {
-            std::string msg = "SetEvent failed; error " + std::to_string(GetLastError());
-            mylog(msg.c_str());
+            s = hwndCache->Put(writeOptions, timestampKey((DWORD)targetHwnd), std::to_string(timestamp));
+            if (!s.ok()) {
+                mylog("WM_CBT_CREATE_WINDOW_MSG received, HWND=%d, but failed to cache it: %s", (int)hwnd, s.ToString().c_str());
+            }
         }
         {
             creationTimestamp = std::time(nullptr);
@@ -435,10 +396,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         return 0;
     case WM_CBT_DESTROY_WINDOW_MSG:
         //mylog("WM_CBT_DESTROY_WINDOW_MSG");
-        {
-            std::lock_guard<std::mutex> guard(cacheMtx);
-            hwndCache.hwndTimes.erase((DWORD)targetHwnd);
-        }        
+    {
+        s = hwndCache->Delete(writeOptions, timestampKey((DWORD)targetHwnd));
+        if (!s.ok()) {
+            mylog("WM_CBT_DESTROY_WINDOW_MSG received, HWND=%d, but failed to delete cache entry: %s", (int)hwnd, s.ToString().c_str());
+        }
+    }
         return 0;
     default:
         return DefWindowProc(hwnd, uMsg, wParam, lParam);
@@ -762,11 +725,11 @@ json init(json& request)
 {
     mylog("init");
     InitRequestData data;
-    if (!request.contains("cacheFileName")) {
-        data.error = "cacheFileName not specified";
+    if (!request.contains("levelDbFileName")) {
+        data.error = "LevelDB cacheFileName not specified";
         return data;
     }
-    cacheFileName = request["cacheFileName"];
+    std::string cacheFileName = request["levelDbFileName"];
     std::string bootupTime = request["bootupTime"];
     mylog("init:loading cache");
     std::string error = loadCache(cacheFileName, bootupTime);
@@ -832,7 +795,7 @@ json terminate(json& request)
     mylog("Terminate: killing windowThread: thread::join() done");
     windowThread = nullptr;
     mylog("Terminate: terminating cache");
-    std::string error = terminateCache(cacheFileName);
+    std::string error = terminateCache();
     if (!error.empty()) {
         result["error"] = "Error terminating cache: " + error;
         return result;
@@ -927,43 +890,16 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
             return true;
         }
     }
-    if (false) {
-        // Previously we tried to retrieve window title here.
-        // There are two problems with this approach:
-        // 1. It returns incorrect result e.g. for Chrome.
-        // Better result for Chrome is obtained via IAccessible2 from Python - at least it is
-        // consistent with NVDA+T speech.
-        // 2. When certain Unicode characters are present (e.g. 🔥), it fails.
-        // But maybe my code is screwed up.
-        // In either case, disable title retrieval.
-
-        size_t length = GetWindowTextLength(hwnd);
-        auto code = GetLastError();
-        if ((length == 0) && (code != 0)) {
-            data.errors.push_back(code);
-            return true;
-        }
-        std::wstring wTitle;
-        wTitle.resize(length + 1);
-        length = GetWindowText(hwnd, &wTitle[0], length + 1);
-        code = GetLastError();
-        if ((length == 0) && (code != 0)) {
-            data.errors.push_back(code);
-            return true;
-        }
-        wTitle.resize(length);
-        std::string sTitle = CONVERTER.to_bytes(wTitle);
-        
-    }
     UINT64 timestamp = data.timestamp;
-    if (hwndCache.hwndTimes.count((UINT32)hwnd) > 0) {
-        timestamp = hwndCache.hwndTimes[(DWORD)hwnd];
+    std::string timestampStr;
+    leveldb::Status status = hwndCache->Get(readOptions, timestampKey((DWORD)hwnd), &timestampStr);
+    if ((!status.ok()) || status.IsNotFound()) {
+        timestamp = std::stoull(timestampStr);
     }
     bool isMaximized = IsWindowMaximized(hwnd);
     data.hwnds.push_back({
         {"hwnd", (UINT32)hwnd},
         {"path", sPath},
-        //{"title", sTitle},
         {"timestamp", timestamp},
         {"isMaximized", isMaximized},
     });
@@ -983,7 +919,6 @@ json queryHwndsImpl(json &request)
     }
     mylog("Calling EnumWindows");
     {
-        std::lock_guard<std::mutex> guard(cacheMtx);
         auto start = std::chrono::high_resolution_clock::now();
         EnumWindows(EnumWindowsCallback, reinterpret_cast<LPARAM>(&data));
         auto stop = std::chrono::high_resolution_clock::now();

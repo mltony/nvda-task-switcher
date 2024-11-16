@@ -1,7 +1,10 @@
-Build instructions for LevelDB
+Build instructions for LevelDB on Windows
 choco install cmake /y
 git clone https://github.com/google/leveldb --recursive
 cd leveldb
 mkdir build
 cd build
 "C:\Program Files\CMake\bin\cmake" -G "Visual Studio 17 2022" -A Win32  .. >out.txt 2>&1
+In start menu open:
+    Developer Command Prompt for VS 2022, App, Press right to switch preview
+devenv /build Release leveldb.sln
