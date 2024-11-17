@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <ctime>
 #include <leveldb/db.h>
+#include <leveldb/write_batch.h>
 
 using nlohmann::json;
 
@@ -120,7 +121,7 @@ std::wstring_convert<std::codecvt_utf8<wchar_t>> CONVERTER;
 const std::string REQ_PROCESS_FILTER("process_filter");
 const std::string BOOT_TIME_COMMAND = "Wmic os get lastbootuptime";
 const std::vector<std::string> arches = {
-    //"Win32", 
+    "Win32", 
     "x64",
 };
 std::unordered_map<std::string, std::thread> cbtClientMonitoringThreads;
@@ -207,6 +208,19 @@ std::string timestampKey(DWORD hwnd) {
 
 }
 
+void cacheTimestamp(DWORD targetHwnd, uint64_t timestamp) {
+    leveldb::Status s = hwndCache->Put(writeOptions, timestampKey((DWORD)targetHwnd), std::to_string(timestamp));
+    if (!s.ok()) {
+        mylog("HWND=%d, but failed to cache it: %s", (int)targetHwnd, s.ToString().c_str());
+    }
+}
+void deleteTimestamp(DWORD targetHwnd) {
+    leveldb::Status s = hwndCache->Delete(writeOptions, timestampKey((DWORD)targetHwnd));
+    if (!s.ok()) {
+        mylog("HWND=%d, but failed to delete cache entry: %s", (int)targetHwnd, s.ToString().c_str());
+    }
+}
+
 std::wstring toLowerCase(const std::wstring& str) {
     std::wstring result = str;
     std::transform(result.begin(), result.end(), result.begin(),
@@ -229,66 +243,56 @@ std::wstring getFileName(const std::wstring& fullPath) {
 }
 
 
-std::string dumpCache(std::string &fileName)
-{
-    // mutex must be acquired from calling function!
-    //std::lock_guard<std::mutex> guard(cacheMtx);
-    /*
-    std::string tmpFileName = fileName + ".tmp";
-    std::remove(tmpFileName.c_str()); // Don't care whether succeeds
-    {
-        std::ofstream fout(tmpFileName);
-        if (!fout) {
-            std::string msg = "Error opening " + tmpFileName;
-            return msg;
-        }
-        json j =hwndCache;
-        std::string jsonStr= j.dump(4);
-        fout << jsonStr;
-    }
-    std::remove(fileName.c_str());
-    std::rename(tmpFileName.c_str(), fileName.c_str());
-    std::remove(tmpFileName.c_str());
-    */
-    return "";
-}
-
 void updateCache(std::unordered_set<UINT32>& allHwnds, UINT64 defaultTimestamp)
 {
-    // Lock must be acquired by a calling function.
-    //std::lock_guard<std::mutex> guard(cacheMtx);
-    /*
-    auto& hwndTimes = hwndCache.hwndTimes;
-    // 1. Drop all hwnds not found during EnumWindows run
-    for (auto it = hwndTimes.begin(); it != hwndTimes.end();) {
-        UINT32 hwnd = it->first;
-        if (allHwnds.find(hwnd) == allHwnds.end()) {
-            it = hwndTimes.erase(it);
+    {
+        // 1. Drop all hwnds not found during EnumWindows run
+        leveldb::WriteBatch batch;
+        leveldb::Iterator* it = hwndCache->NewIterator(readOptions);
+        std::string& start = hwndTimestampPrefix;
+        std::string limit = hwndTimestampPrefix + ":";
+        for (it->Seek(start);
+                it->Valid() && it->key().ToString() < limit;
+                it->Next()
+        ) {
+            std::string strHwnd = it->key().data();
+            strHwnd = strHwnd.substr(hwndTimestampPrefix.size());
+            DWORD hwnd = std::stoul(strHwnd);
+            if (allHwnds.find(hwnd) == allHwnds.end()) {
+                batch.Delete(it->key());
+            }
         }
-        else {
-            ++it;
+        leveldb::Status s = hwndCache->Write(writeOptions, &batch);
+        if (!s.ok()) {
+            mylog("Failed to BULK DELETE FROM updateCache: %s", s.ToString().c_str());
         }
     }
-    // 2. Add all hwnds that are found, but missing in the cache.
-    for (auto it = allHwnds.begin(); it != allHwnds.end(); it++) {
-        if (hwndTimes.find(*it) == hwndTimes.end()) {
-            hwndTimes.emplace(*it, defaultTimestamp);
+    {
+        // 2. Add all hwnds that are found, but missing in the cache.
+        leveldb::WriteBatch batch;
+        for (auto it = allHwnds.begin(); it != allHwnds.end(); it++) {
+            DWORD hwnd = *it;
+            std::string timestampStr;
+            leveldb::Status status = hwndCache->Get(readOptions, timestampKey((DWORD)hwnd), &timestampStr);
+            if (status.IsNotFound()) {
+                batch.Put(timestampKey((DWORD)hwnd), std::to_string(defaultTimestamp));
+            } else if (!status.ok()) {
+                mylog("Failed to read HWND %d from updateCache: %s", (int)hwnd, status.ToString().c_str());
+            }
         }
     }
-    */
 }
 
 bool deleteAllEntries() {
-    std::vector<std::string> keys;
+    leveldb::WriteBatch batch;
     leveldb::Iterator* it = hwndCache->NewIterator(readOptions);
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
-        keys.push_back(it->key().ToString());
+        batch.Delete(it->key());
     }
-    for (const auto& key : keys) {
-        leveldb::Status s =hwndCache->Delete(writeOptions, key);
-        if (!s.ok()) {
-            return false;
-        }
+    leveldb::Status s = hwndCache->Write(writeOptions, &batch);
+    if (!s.ok()) {
+        mylog("Failed to BULK DELETE FROM deleteAllEntries: %s", s.ToString().c_str());
+        return false;
     }
     return true;
 }
@@ -384,24 +388,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         //mylog("WM_CBT_CREATE_WINDOW_MSG HWND=%lu t=%llu", (UINT32)(DWORD)targetHwnd, (UINT64)timestamp);
         //MessageBeep(0xFFFFFFFF);        
         //Beep(500, 50);
-        {
-            s = hwndCache->Put(writeOptions, timestampKey((DWORD)targetHwnd), std::to_string(timestamp));
-            if (!s.ok()) {
-                mylog("WM_CBT_CREATE_WINDOW_MSG received, HWND=%d, but failed to cache it: %s", (int)hwnd, s.ToString().c_str());
-            }
-        }
+        cacheTimestamp((DWORD)targetHwnd, timestamp);
         {
             creationTimestamp = std::time(nullptr);
         }
         return 0;
     case WM_CBT_DESTROY_WINDOW_MSG:
         //mylog("WM_CBT_DESTROY_WINDOW_MSG");
-    {
-        s = hwndCache->Delete(writeOptions, timestampKey((DWORD)targetHwnd));
-        if (!s.ok()) {
-            mylog("WM_CBT_DESTROY_WINDOW_MSG received, HWND=%d, but failed to delete cache entry: %s", (int)hwnd, s.ToString().c_str());
-        }
-    }
+        deleteTimestamp((DWORD)targetHwnd);
         return 0;
     default:
         return DefWindowProc(hwnd, uMsg, wParam, lParam);
@@ -939,16 +933,11 @@ json queryHwndsImpl(json &request)
 
 json updateTimestamps(json& request)
 {
-    std::lock_guard<std::mutex> guard(cacheMtx);
     for (const auto& window : request["windows"]) {
         UINT32 hwnd = window["hwnd"];
         UINT64 timestamp = window["timestamp"];
-        hwndCache.hwndTimes[hwnd] = timestamp;
+        cacheTimestamp(hwnd, timestamp);
     }    
-    if (!SetEvent(hEvent)) {
-        std::string msg = "SetEvent failed; error " + std::to_string(GetLastError());
-        return json({ {"error", msg}});
-    }
     return json({});
 }
 
