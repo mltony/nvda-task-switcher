@@ -617,64 +617,18 @@ bool spawnCbtClientAndMonitor(InitRequestData& data, const std::string& arch)
     return true;
 }
 
-bool spawnCbtClientOld(InitRequestData& data, const std::string& arch)
-{
-    // This old version tries to communicate to stdin of the child process.
-    // This overcomplicates things and suspect causes CBT client crash.
-    mylog("SP start");
-    std::wstring clientPath(dllPath);
-    std::size_t pos = clientPath.rfind(L"\\");
-    clientPath.resize(pos + 1);
-    clientPath += CONVERTER.from_bytes(arch);
-    clientPath += L"\\";
-    clientPath += L"cbt_client.exe";
-    mylog("Launching: %s", CONVERTER.to_bytes(clientPath).c_str());
-    size_t len = clientPath.length();
-    wchar_t* command = _wcsdup(clientPath.c_str());
-
-    std::tuple< HANDLE, HANDLE> pipeHandleds = createPipe();
-    HANDLE g_hChildStd_IN_Rd = std::get<0>(pipeHandleds), g_hChildStd_IN_Wr = std::get<1>(pipeHandleds);
-    if ((g_hChildStd_IN_Rd == nullptr) || (g_hChildStd_IN_Wr == nullptr)) {
-        data.error = "Failed to create pipes for CBT client child process";
-        return false;
-    }
-    STARTUPINFO siStartInfo;
-    ZeroMemory(&siStartInfo, sizeof(STARTUPINFO));
-    siStartInfo.cb = sizeof(STARTUPINFO);
-    siStartInfo.hStdError = g_hChildStd_IN_Wr;
-    siStartInfo.hStdOutput = g_hChildStd_IN_Wr;
-    siStartInfo.hStdInput = g_hChildStd_IN_Rd;
-    siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
-
-    PROCESS_INFORMATION piProcInfo;
-    ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
-
-    if (!CreateProcess(NULL, command, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &siStartInfo, &piProcInfo)) {
-        DWORD code = GetLastError();
-        data.error = "CreateProcess failed. ErrorCode = ";
-        data.error += std::to_string(code);
-        return false;
-    }
-    DWORD processId = piProcInfo.dwProcessId;
-    data.processIds[arch] = processId;
-
-    free(command);
-    CloseHandle(piProcInfo.hProcess);
-    CloseHandle(piProcInfo.hThread);
-    CloseHandle(g_hChildStd_IN_Rd);
-    processHandles[arch] = g_hChildStd_IN_Wr;
-    return true;
-}
-
 DWORD killCbtClient(std::string arch)
 {
     mylog("Kill %s start", arch.c_str());
     HWND hwnd = findCBTClientWindow(arch);
     if (hwnd == nullptr) {
         std::string errorMsg = "Cannot find window for arch " + arch + " to terminate cbt client for arch " + arch;
-        throw CBTException(errorMsg);
+        //throw CBTException(errorMsg);
+        // Actually do nothing. Sometimes we just call terminate just in case.
     }
-    PostMessage(hwnd, WM_HWND_OBSERVER_DESTROY_WINDOW, 0, 0);
+    else {
+        PostMessage(hwnd, WM_HWND_OBSERVER_DESTROY_WINDOW, 0, 0);
+    }
 
     bool isWindowFound = true, isProcessAlive = true;
     size_t i = 0;
@@ -774,20 +728,26 @@ json terminate(json& request)
     }
     mylog("Terminate: destroying invisible window");
     if (invisibleHwnd == nullptr) {
-        result["error"] = "invisibleHwnd is null";
-        return result;
+        //result["error"] = "invisibleHwnd is null";
+        // Don't throw since now we call terminate just in case
+        //return result;
     }
-    PostMessage(invisibleHwnd, WM_HWND_OBSERVER_DESTROY_WINDOW, 0, 0);
+    else {
+        PostMessage(invisibleHwnd, WM_HWND_OBSERVER_DESTROY_WINDOW, 0, 0);
+    }
 
     mylog("Terminate: killing windowThread");
     if (windowThread == nullptr) {
-        result["error"] = "windowThread is null";
-        return result;
-    }    
-    mylog("Terminate: killing windowThread: calling thread::join()");
-    windowThread->join();
-    mylog("Terminate: killing windowThread: thread::join() done");
-    windowThread = nullptr;
+        //result["error"] = "windowThread is null";
+        //return result;
+        // Don't throw
+    }
+    else {
+        mylog("Terminate: killing windowThread: calling thread::join()");
+        windowThread->join();
+        mylog("Terminate: killing windowThread: thread::join() done");
+        windowThread = nullptr;
+    }
     mylog("Terminate: terminating cache");
     std::string error = terminateCache();
     if (!error.empty()) {
@@ -796,6 +756,7 @@ json terminate(json& request)
     }
     mylog("Terminate: success");
     result["error"] = "";
+    mylog("Terminate: success");
     return result;
 }
 
@@ -887,7 +848,7 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
     UINT64 timestamp = data.timestamp;
     std::string timestampStr;
     leveldb::Status status = hwndCache->Get(readOptions, timestampKey((DWORD)hwnd), &timestampStr);
-    if ((!status.ok()) || status.IsNotFound()) {
+    if (status.ok() && (!status.IsNotFound())) {
         timestamp = std::stoull(timestampStr);
     }
     bool isMaximized = IsWindowMaximized(hwnd);

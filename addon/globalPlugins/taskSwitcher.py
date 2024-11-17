@@ -72,6 +72,7 @@ import subprocess
 import NVDAObjects
 import psutil
 from enum import IntEnum
+import shutil
 
 try:
     REASON_CARET = controlTypes.REASON_CARET
@@ -79,7 +80,7 @@ except AttributeError:
     REASON_CARET = controlTypes.OutputReason.CARET
 
 
-debug = False
+debug = True
 if debug:
     import threading
     LOG_FILE_NAME = "C:\\Users\\tony\\1.txt"
@@ -101,6 +102,9 @@ def myAssert(condition):
     if not condition:
         raise RuntimeError("Assertion failed")
 
+class HWNDObserverException(RuntimeError):
+    pass
+
 class CBTState(IntEnum):
     NOT_STARTED = 0
     INITIALIZING = 1
@@ -113,6 +117,7 @@ module = "taskSwitcher"
 def initConfiguration():
     confspec = {
         "observerCacheFile" : "string( default='%TMP%\\NVDATaskSwitcherObserverCache.json')",
+        "levelDbCacheFile" : "string( default='%CONFIGPATH%\\TaskSwitcherObserverCache\\cache.leveldb')",
         "autoMaximize" : "boolean( default=True)",
         "clickVolume" : "integer( default=50, min=0, max=100)",
     }
@@ -261,8 +266,6 @@ def lazyLoadConfig():
 
 def saveConfig():
     global globalConfig
-    #api.c=globalConfig
-    #api.d=dataclassToDict(globalConfig)
     with open(configFileName, "w", encoding='utf-8') as f:
         print(
             #json.dumps(dataclassToDict(globalConfig)),
@@ -289,7 +292,7 @@ def queryObserver(command, **kwargs):
         j = json.loads(response_str.decode('utf-8'))
         if "error" in j and len(j['error']) > 0:
             error = j['error']
-            raise RuntimeError(f"HWNDObserver error: {error}")
+            raise HWNDObserverException(f"HWNDObserver error: {error}")
         return j
     finally:
         observerDll.freeBuffer(result)
@@ -334,6 +337,7 @@ def kill_processes(process_name):
 
 
 def initHwndObserver():
+    mylog("initHwndObserver")
     global cbtState
     assert cbtState == CBTState.NOT_STARTED
     cbtState = CBTState.INITIALIZING
@@ -348,9 +352,30 @@ def initHwndObserver():
     observerDll.freeBuffer.argtypes = [c_void_p]
     observerDll.freeBuffer.restype = None
     
-    cacheFileName = os.path.expandvars(getConfig("observerCacheFile"))
+    #cacheFileName = os.path.expandvars(getConfig("observerCacheFile"))
+    levelDbCacheFileName = os.path.expandvars(getConfig("levelDbCacheFile"))
+    levelDbCacheFileName = levelDbCacheFileName.lower().replace('%CONFIGPATH%'.lower(), globalVars.appArgs.configPath)
+    levelDbCacheDir = os.path.dirname(levelDbCacheFileName)
     bootupTime = getBootupTime2()
-    queryObserver("init", cacheFileName=cacheFileName, bootupTime=bootupTime)
+    for attempt in range(2):
+        mylog(f"initHwndObserver {attempt=}")
+        if not os.path.exists(levelDbCacheDir):
+            os.makedirs(levelDbCacheDir)
+            mylog("Created empty cache dir")
+        try:
+            queryObserver("init", levelDbFileName=levelDbCacheFileName, bootupTime=bootupTime)
+            break
+        except HWNDObserverException as e:
+            mylog("Init exception {e}")
+            if attempt > 0:
+                raise e
+            # If first attempt, then log error; try to delete the cache in case it could be corrupted, and try again
+            log.exception("Exception while initializing HWND observer. Will purge cache and retry.", e)
+            mylog("About to terminate")
+            queryObserver("terminate")
+            mylog("Terminate successful; purging cache directory {levelDbCacheDir=}")
+            shutil.rmtree(levelDbCacheDir)
+    mylog("Init success!")
     cbtState = CBTState.RUNNING
 
 def initHwndObserverAsync():
@@ -388,14 +413,14 @@ class SettingsDialog(SettingsPanel):
         self.clickVolumeSlider = sHelper.addLabeledControl(label, wx.Slider, minValue=0,maxValue=100)
         self.clickVolumeSlider.SetValue(getConfig("clickVolume"))
       # Edit cache file
-        self.cacheFileEdit = sHelper.addLabeledControl(_("Cache file location (requires restart)"), wx.TextCtrl)
-        self.cacheFileEdit.Value = getConfig("observerCacheFile")
+        #self.cacheFileEdit = sHelper.addLabeledControl(_("Cache file location (requires restart)"), wx.TextCtrl)
+        #self.cacheFileEdit.Value = getConfig("observerCacheFile")
 
 
     def onSave(self):
         setConfig("autoMaximize", self.AutoMaxCheckbox.Value)
         setConfig("clickVolume", self.clickVolumeSlider.Value)
-        setConfig("observerCacheFile", self.cacheFileEdit.Value)
+        #setConfig("observerCacheFile", self.cacheFileEdit.Value)
 
 
 class Beeper:
@@ -1135,6 +1160,5 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     @script(description=_("Print health check."), gestures=['kb:NVDA+control+f11'])
     def script_printHealthCheck(self, gesture):
         z = queryObserver("healthCheck")
-        #api.z = z['result']
         log.info(z['result'])
         tones.beep(500, 50)
