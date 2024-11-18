@@ -837,6 +837,7 @@ class ReorderWindowsDialog(
             style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_VIRTUAL
         )
         self.windowsList.InsertColumn(0, _("Title"), width=self.scaleSize(150))
+        self.windowsList.InsertColumn(0, _("Timestamp"))
         self.windowsList.Bind(wx.EVT_LIST_ITEM_FOCUSED, self.onListItemFocused)
         self.windowsList.ItemCount = len(self.hwnds)
 
@@ -862,6 +863,8 @@ class ReorderWindowsDialog(
         hwnd = self.hwnds[item]
         if column == 0:
             return hwnd['title']
+        elif column == 1:
+            return str(hwnd['timestamp'])
         else:
             raise ValueError("Unknown column: %d" % column)
 

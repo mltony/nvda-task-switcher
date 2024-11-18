@@ -139,12 +139,14 @@ std::unique_ptr<std::thread> windowThread;
 std::unordered_map<std::string, HANDLE> processHandles;
 volatile bool cbtClientTerminateSignal = false;
 
+uint64_t getCurrentUnixTimeMillis() {
+    auto now = std::chrono::system_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+}
+
 UINT64 getTimestamp()
 {
-    auto now = std::chrono::high_resolution_clock::now();
-    auto elapsed = now - std::chrono::high_resolution_clock::time_point{};
-    std::uint64_t timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
-    return timestamp;
+    return getCurrentUnixTimeMillis();
 }
 
 bool IsProcessRunning(DWORD pid)
@@ -280,6 +282,10 @@ void updateCache(std::unordered_set<UINT32>& allHwnds, UINT64 defaultTimestamp)
                 mylog("Failed to read HWND %d from updateCache: %s", (int)hwnd, status.ToString().c_str());
             }
         }
+        leveldb::Status s = hwndCache->Write(writeOptions, &batch);
+        if (!s.ok()) {
+            mylog("Failed to bulk store new entries from updateCache: %s", s.ToString().c_str());
+        }    
     }
 }
 
