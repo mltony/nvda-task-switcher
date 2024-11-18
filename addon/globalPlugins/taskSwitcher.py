@@ -117,7 +117,7 @@ module = "taskSwitcher"
 def initConfiguration():
     confspec = {
         "observerCacheFile" : "string( default='%TMP%\\NVDATaskSwitcherObserverCache.json')",
-        "levelDbCacheFile" : "string( default='%CONFIGPATH%\\TaskSwitcherObserverCache\\cache.leveldb')",
+        "levelDbCacheFile" : "string( default='%CONFIGPATH%\\task_switcher_cache')",
         "autoMaximize" : "boolean( default=True)",
         "clickVolume" : "integer( default=50, min=0, max=100)",
     }
