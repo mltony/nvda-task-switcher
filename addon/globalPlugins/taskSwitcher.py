@@ -213,7 +213,7 @@ def updateKeystrokes():
             if func != GlobalPlugin.script_taskSwitch
         },
         **{
-            keyboardHandler.KeyboardInputGesture.fromName(entry.keystroke).normalizedIdentifiers[-1]: GlobalPlugin.script_taskSwitch
+            inputCore.normalizeGestureIdentifier(f"kb:{entry.keystroke}"): GlobalPlugin.script_taskSwitch
             for entry in globalConfig.entries
             if entry.keystroke
         },
@@ -221,7 +221,7 @@ def updateKeystrokes():
     
     global globalGesturesToEntries
     globalGesturesToEntries = {
-        getKeystrokeFromGesture(keyboardHandler.KeyboardInputGesture.fromName(entry.keystroke)): entry
+        inputCore.normalizeGestureIdentifier(f"kb:{entry.keystroke}").split(':')[1]: entry
         for entry in globalConfig.entries
         if entry.keystroke
     }
@@ -540,7 +540,7 @@ def executeAsynchronously(gen):
         wx.CallLater(value, l)
 
 def getKeystrokeFromGesture(gesture):
-    keystroke = gesture.identifiers[-1].split(':')[1]
+    keystroke = gesture.normalizedIdentifiers[-1].split(':')[1]
     return keystroke
 
 class EditEntryDialog(wx.Dialog):
