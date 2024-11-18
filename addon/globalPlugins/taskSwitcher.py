@@ -80,7 +80,7 @@ except AttributeError:
     REASON_CARET = controlTypes.OutputReason.CARET
 
 
-debug = True
+debug = False
 if debug:
     import threading
     LOG_FILE_NAME = "C:\\Users\\tony\\1.txt"
