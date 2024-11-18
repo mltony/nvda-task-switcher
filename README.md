@@ -22,4 +22,9 @@ Now try pressing `windows+z` and it'll switch you to that application.
 
 ## Order of windows
 
-Please note, that it is currently impossible to programmatically find out the order in which several windows of an application have been opened. Therefore task switcher will assume a random order for the windows that were created before task switcher starts. You can manually change the order of such windows via taskswitcher popup menu. Once it starts, Task switcher will monitor and record creation time for all windows and this information will be stored in cache file (its location is configurable in task switcher settings), which means that this information will be shared across NVDA restarts and across instances of task switcher running in different installations of NVDA.
+Please note, that it is currently impossible to programmatically find out the order in which several windows of an application have been opened. Therefore task switcher will assume a random order for the windows that were created before task switcher starts. You can manually change the order of such windows via taskswitcher popup menu. Once it starts, Task switcher will monitor and record creation time for all windows and this information will be stored in cache file.
+
+## Removal and upgrading
+
+Please note, that in order to remove or upgrade this add-on, you would need to restart your computer. Any attempt to remove/upgrade add-on without full system restart will cause NVDA to run into errors removing add-on directory.
+This is expected, since task switcher add-on uses CBT hooks in order to observe creation of windows in the system. As a result, certain DLL files within the add-on remain in use even after NVDA shutts down. The only way to remove these files is to reboot your computer.
