@@ -117,7 +117,7 @@ module = "taskSwitcher"
 def initConfiguration():
     confspec = {
         "observerCacheFile" : "string( default='%TMP%\\NVDATaskSwitcherObserverCache.json')",
-        "levelDbCacheFile" : "string( default='%CONFIGPATH%\\task_switcher_cache')",
+        "levelDbCacheFile" : "string( default='%TEMP%\\NVDATaskSwitcherCache')",
         "autoMaximize" : "boolean( default=True)",
         "clickVolume" : "integer( default=50, min=0, max=100)",
     }
@@ -335,6 +335,19 @@ def kill_processes(process_name):
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
 
+def expandWindowsVars(s, fake_env):
+    # Merge real environment with fake one, uppercased for case-insensitivity
+    env = {k.upper(): v for k, v in os.environ.items()}
+    env.update({k.upper(): v for k, v in fake_env.items()})
+
+    # Match Windows-style %VAR% patterns
+    pattern = re.compile(r'%([^%]+)%')
+
+    def replacer(match):
+        var_name = match.group(1).upper()
+        return env.get(var_name, match.group(0))  # return original if not found
+
+    return pattern.sub(replacer, s)
 
 def initHwndObserver():
     mylog("initHwndObserver")
@@ -352,9 +365,11 @@ def initHwndObserver():
     observerDll.freeBuffer.argtypes = [c_void_p]
     observerDll.freeBuffer.restype = None
     
-    #cacheFileName = os.path.expandvars(getConfig("observerCacheFile"))
-    levelDbCacheFileName = os.path.expandvars(getConfig("levelDbCacheFile"))
-    levelDbCacheFileName = levelDbCacheFileName.lower().replace('%CONFIGPATH%'.lower(), globalVars.appArgs.configPath)
+    #levelDbCacheFileName = os.path.expandvars(getConfig("levelDbCacheFile"))
+    #levelDbCacheFileName = levelDbCacheFileName.lower().replace('%CONFIGPATH%'.lower(), globalVars.appArgs.configPath)
+    fakeEnv = {'NVDA_CONFIGPATH': globalVars.appArgs.configPath}
+    levelDbCacheFileName = expandWindowsVars(getConfig("levelDbCacheFile"), fakeEnv)
+    
     levelDbCacheDir = os.path.dirname(levelDbCacheFileName)
     bootupTime = getBootupTime2()
     for attempt in range(2):
@@ -415,12 +430,16 @@ class SettingsDialog(SettingsPanel):
       # Edit cache file
         #self.cacheFileEdit = sHelper.addLabeledControl(_("Cache file location (requires restart)"), wx.TextCtrl)
         #self.cacheFileEdit.Value = getConfig("observerCacheFile")
+      # Edit LevelDB cache file
+        self.levelDbCacheFileEdit = sHelper.addLabeledControl(_("Cache file location (requires restart)"), wx.TextCtrl)
+        self.levelDbCacheFileEdit.Value = getConfig("levelDbCacheFile")
 
 
     def onSave(self):
         setConfig("autoMaximize", self.AutoMaxCheckbox.Value)
         setConfig("clickVolume", self.clickVolumeSlider.Value)
         #setConfig("observerCacheFile", self.cacheFileEdit.Value)
+        setConfig("levelDbCacheFile", self.levelDbCacheFileEdit.Value)
 
 
 class Beeper:
