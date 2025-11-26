@@ -73,6 +73,7 @@ import NVDAObjects
 import psutil
 from enum import IntEnum
 import shutil
+import winBindings
 
 try:
     REASON_CARET = controlTypes.REASON_CARET
@@ -408,7 +409,7 @@ def destroyHwndObserver():
 addonHandler.initTranslation()
 initConfiguration()
 
-SetActiveWindow = winUser.user32.SetActiveWindow
+SetActiveWindow = winBindings.user32.dll.SetActiveWindow
 SetActiveWindow.argtypes = [ctypes.c_void_p]  # HWND is a void pointer
 SetActiveWindow.restype = ctypes.c_bool  # Returns BOOL
 
@@ -1160,7 +1161,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         fg = fg or api.getForegroundObject()
         handle = fg.windowHandle
         self.hiddenWindows.append(handle)
-        winUser.user32.ShowWindow(handle, winUser.SW_HIDE)
+        winBindings.user32.dll.ShowWindow(handle, winUser.SW_HIDE)
         keyboardHandler.KeyboardInputGesture.fromName("Alt+Tab").send()
         def delayedSpeak():
             speech.cancelSpeech()
@@ -1176,7 +1177,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         for handle in self.hiddenWindows:
             time.sleep(0.1)
             SW_SHOW = 5
-            winUser.user32.ShowWindow(handle, SW_SHOW)
+            winBindings.user32.dll.ShowWindow(handle, SW_SHOW)
         winUser.setForegroundWindow(self.hiddenWindows[-1])
         def delayedSpeak():
             speech.cancelSpeech()
