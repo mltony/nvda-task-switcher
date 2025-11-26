@@ -12,13 +12,13 @@ call clean.cmd
 call build.cmd
 cd ..
 
-cp cbt_hook\Release\hwndObserver.dll addon\globalPlugins\
+cp cbt_hook\x64\Release\hwndObserver.dll addon\globalPlugins\
 mkdir addon\globalPlugins\Win32
 mkdir addon\globalPlugins\x64
-cp cbt_hook\Release\Win32\cbt_hook.dll addon\globalPlugins\Win32\
-cp cbt_hook\Release\Win32\cbt_client.exe addon\globalPlugins\Win32\
-cp cbt_hook\Release\x64\cbt_hook.dll addon\globalPlugins\x64\
-cp cbt_hook\Release\x64\cbt_client.exe addon\globalPlugins\x64\
+cp cbt_hook\cbt_hook\Release\Win32\cbt_hook.dll addon\globalPlugins\Win32\
+cp cbt_hook\cbt_client\Release\Win32\cbt_client.exe addon\globalPlugins\Win32\
+cp cbt_hook\cbt_hook\Release\x64\cbt_hook.dll addon\globalPlugins\x64\
+cp cbt_hook\cbt_client\Release\x64\cbt_client.exe addon\globalPlugins\x64\
 scons -c && scons
 cp %ff%  H:\od\
 

@@ -183,7 +183,7 @@ struct RequestData {
     json hwnds = json::array();
     json errors = json::array();
     UINT64 timestamp;
-    std::unordered_set<UINT32> allHwnds;
+    std::unordered_set<UINT64> allHwnds;
 };
 
 struct InitRequestData {
@@ -194,7 +194,7 @@ struct InitRequestData {
 
 void to_json(json& j, const InitRequestData& data) {
     j = json{
-        {"hwnd ", (UINT32)data.hwnd },
+        {"hwnd ", (UINT64)data.hwnd },
         {"error", data.error},
         {"ProcessIds", data.processIds},
     };
@@ -205,19 +205,19 @@ leveldb::WriteOptions writeOptions;
 leveldb::ReadOptions readOptions;
 std::string keyBootTime = "bootTime";
 std::string hwndTimestampPrefix = "ht";
-std::string timestampKey(DWORD hwnd) {
+std::string timestampKey(UINT64 hwnd) {
     return hwndTimestampPrefix + std::to_string(hwnd);
 
 }
 
-void cacheTimestamp(DWORD targetHwnd, uint64_t timestamp) {
-    leveldb::Status s = hwndCache->Put(writeOptions, timestampKey((DWORD)targetHwnd), std::to_string(timestamp));
+void cacheTimestamp(UINT64 targetHwnd, uint64_t timestamp) {
+    leveldb::Status s = hwndCache->Put(writeOptions, timestampKey((UINT64)targetHwnd), std::to_string(timestamp));
     if (!s.ok()) {
         mylog("HWND=%d, but failed to cache it: %s", (int)targetHwnd, s.ToString().c_str());
     }
 }
-void deleteTimestamp(DWORD targetHwnd) {
-    leveldb::Status s = hwndCache->Delete(writeOptions, timestampKey((DWORD)targetHwnd));
+void deleteTimestamp(UINT64 targetHwnd) {
+    leveldb::Status s = hwndCache->Delete(writeOptions, timestampKey((UINT64)targetHwnd));
     if (!s.ok()) {
         mylog("HWND=%d, but failed to delete cache entry: %s", (int)targetHwnd, s.ToString().c_str());
     }
@@ -245,7 +245,7 @@ std::wstring getFileName(const std::wstring& fullPath) {
 }
 
 
-void updateCache(std::unordered_set<UINT32>& allHwnds, UINT64 defaultTimestamp)
+void updateCache(std::unordered_set<UINT64>& allHwnds, UINT64 defaultTimestamp)
 {
     {
         // 1. Drop all hwnds not found during EnumWindows run
@@ -273,11 +273,11 @@ void updateCache(std::unordered_set<UINT32>& allHwnds, UINT64 defaultTimestamp)
         // 2. Add all hwnds that are found, but missing in the cache.
         leveldb::WriteBatch batch;
         for (auto it = allHwnds.begin(); it != allHwnds.end(); it++) {
-            DWORD hwnd = *it;
+            UINT64 hwnd = *it;
             std::string timestampStr;
-            leveldb::Status status = hwndCache->Get(readOptions, timestampKey((DWORD)hwnd), &timestampStr);
+            leveldb::Status status = hwndCache->Get(readOptions, timestampKey((UINT64)hwnd), &timestampStr);
             if (status.IsNotFound()) {
-                batch.Put(timestampKey((DWORD)hwnd), std::to_string(defaultTimestamp));
+                batch.Put(timestampKey((UINT64)hwnd), std::to_string(defaultTimestamp));
             } else if (!status.ok()) {
                 mylog("Failed to read HWND %d from updateCache: %s", (int)hwnd, status.ToString().c_str());
             }
@@ -394,14 +394,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         //mylog("WM_CBT_CREATE_WINDOW_MSG HWND=%lu t=%llu", (UINT32)(DWORD)targetHwnd, (UINT64)timestamp);
         //MessageBeep(0xFFFFFFFF);        
         //Beep(500, 50);
-        cacheTimestamp((DWORD)targetHwnd, timestamp);
+        cacheTimestamp((UINT64)targetHwnd, timestamp);
         {
             creationTimestamp = std::time(nullptr);
         }
         return 0;
     case WM_CBT_DESTROY_WINDOW_MSG:
         //mylog("WM_CBT_DESTROY_WINDOW_MSG");
-        deleteTimestamp((DWORD)targetHwnd);
+        deleteTimestamp((UINT64)targetHwnd);
         return 0;
     default:
         return DefWindowProc(hwnd, uMsg, wParam, lParam);
@@ -783,12 +783,12 @@ bool IsWindowMaximized(HWND hWnd) {
     return placement.showCmd == SW_SHOWMAXIMIZED;
 }
 
-std::unordered_map<UINT32, std::wstring> appNameCache;
-std::unordered_map<UINT32, std::string> fullPathCache;
+std::unordered_map<UINT64, std::wstring> appNameCache;
+std::unordered_map<UINT64, std::string> fullPathCache;
 BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
 {
     RequestData& data = *reinterpret_cast<RequestData*>(lParam);
-    UINT32 uHwnd = (UINT32)hwnd;
+    UINT64 uHwnd = (UINT64)hwnd;
     data.allHwnds.emplace(uHwnd);
     bool needCheckFileName = true;
     std::string sPath;
@@ -811,7 +811,7 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
         // requested only visible windows and this one is invisible
         return true;
     }
-    mylog("cb hwnd=%lu", (UINT32)hwnd);
+    mylog("cb hwnd=%llu", (UINT64)hwnd);
     if (needCheckFileName) {
         DWORD processId;
         DWORD code = GetWindowThreadProcessId(hwnd, &processId);
@@ -853,13 +853,13 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
     }
     UINT64 timestamp = data.timestamp;
     std::string timestampStr;
-    leveldb::Status status = hwndCache->Get(readOptions, timestampKey((DWORD)hwnd), &timestampStr);
+    leveldb::Status status = hwndCache->Get(readOptions, timestampKey((UINT64)hwnd), &timestampStr);
     if (status.ok() && (!status.IsNotFound())) {
         timestamp = std::stoull(timestampStr);
     }
     bool isMaximized = IsWindowMaximized(hwnd);
     data.hwnds.push_back({
-        {"hwnd", (UINT32)hwnd},
+        {"hwnd", (UINT64)hwnd},
         {"path", sPath},
         {"timestamp", timestamp},
         {"isMaximized", isMaximized},
