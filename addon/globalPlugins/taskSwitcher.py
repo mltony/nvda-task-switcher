@@ -713,23 +713,23 @@ if True:
         # Notepad++ editor is Scintilla; focus there if OS focus is stuck elsewhere.
         h = FindWindowExW(wintypes.HWND(root_hwnd), wintypes.HWND(0), "Scintilla", None)
         return int(h or 0)
-    
-    def activateWindowBetter(hwnd: int, forceChildFocus: bool = False) -> bool:
+
+    def _activate_window_impl(hwnd: int, forceChildFocus: bool = False) -> bool:
         hwnd = int(GetAncestor(wintypes.HWND(hwnd), GA_ROOT)) or hwnd
-    
+
         if IsIconic(wintypes.HWND(hwnd)):
             ShowWindow(wintypes.HWND(hwnd), SW_RESTORE)
-    
+
         fg = int(GetForegroundWindow() or 0)
-    
+
         _pid = wintypes.DWORD()
         target_tid = int(GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(_pid)) or 0)
-    
+
         _fg_pid = wintypes.DWORD()
         fg_tid = int(GetWindowThreadProcessId(wintypes.HWND(fg), ctypes.byref(_fg_pid)) or 0) if fg else 0
-    
+
         self_tid = int(GetCurrentThreadId())
-    
+
         attached_to_fg = False
         attached_to_target = False
         try:
@@ -737,11 +737,11 @@ if True:
                 attached_to_fg = bool(AttachThreadInput(self_tid, fg_tid, True))
             if target_tid and target_tid != self_tid:
                 attached_to_target = bool(AttachThreadInput(self_tid, target_tid, True))
-    
+
             BringWindowToTop(wintypes.HWND(hwnd))
             SetForegroundWindow(wintypes.HWND(hwnd))
             SetActiveWindow(wintypes.HWND(hwnd))
-    
+
             if forceChildFocus:
                 # Notepad++ fix: push focus into editor, not the frame/tab bar.
                 gti = GUITHREADINFO()
@@ -749,21 +749,43 @@ if True:
                 focus_hwnd = 0
                 if target_tid and GetGUIThreadInfo(wintypes.DWORD(target_tid), ctypes.byref(gti)):
                     focus_hwnd = int(gti.hwndFocus or 0) or int(gti.hwndActive or 0)
-    
+
                 if focus_hwnd and focus_hwnd != hwnd:
                     SetFocus(wintypes.HWND(focus_hwnd))
                 else:
                     scint = _find_scintilla_child(hwnd)
                     if scint:
                         SetFocus(wintypes.HWND(scint))
-    
+
         finally:
             if attached_to_target:
                 AttachThreadInput(self_tid, target_tid, False)
             if attached_to_fg:
                 AttachThreadInput(self_tid, fg_tid, False)
-    
+
         return int(GetForegroundWindow() or 0) == hwnd
+    
+    def activateWindowBetter(hwnd: int, forceChildFocus: bool = False) -> bool:
+        done = threading.Event()
+        result = {"ok": False}
+
+        def _run():
+            try:
+                result["ok"] = _activate_window_impl(hwnd, forceChildFocus)
+            except Exception:
+                log.exception("activateWindowBetter worker failed for hwnd %s", hwnd)
+            finally:
+                done.set()
+
+        threading.Thread(
+            target=_run,
+            name="TaskSwitcher-ActivateWindow",
+            daemon=True,
+        ).start()
+        if not done.wait(1.0):
+            log.warning("activateWindowBetter timed out after 1.0s for hwnd %s", hwnd)
+            return False
+        return result["ok"]
 
     def nvdaRefreshFocusFromOS():
         try:
