@@ -613,8 +613,7 @@ if False:
     GetGUIThreadInfo = user32.GetGUIThreadInfo
     GetGUIThreadInfo.argtypes = [wintypes.DWORD, ctypes.POINTER(GUITHREADINFO)]
     GetGUIThreadInfo.restype = wintypes.BOOL
-    
-    
+
     def nvdaRefreshFocusFromOS():
         gti = GUITHREADINFO()
         gti.cbSize = sizeof(GUITHREADINFO)
@@ -689,6 +688,37 @@ if True:
     FindWindowExW = user32.FindWindowExW
     FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
     FindWindowExW.restype = wintypes.HWND
+
+    GetClassNameW = user32.GetClassNameW
+    GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    GetClassNameW.restype = ctypes.c_int
+
+    EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    EnumWindows = user32.EnumWindows
+    EnumWindows.argtypes = [EnumWindowsProc, wintypes.LPARAM]
+    EnumWindows.restype = wintypes.BOOL
+
+    IsWindowVisible = user32.IsWindowVisible
+    IsWindowVisible.argtypes = [wintypes.HWND]
+    IsWindowVisible.restype = wintypes.BOOL
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    OpenProcess = kernel32.OpenProcess
+    OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    OpenProcess.restype = wintypes.HANDLE
+
+    CloseHandle = kernel32.CloseHandle
+    CloseHandle.argtypes = [wintypes.HANDLE]
+    CloseHandle.restype = wintypes.BOOL
+
+    QueryFullProcessImageNameW = kernel32.QueryFullProcessImageNameW
+    QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    QueryFullProcessImageNameW.restype = wintypes.BOOL
     
     
     class GUITHREADINFO(Structure):
@@ -713,6 +743,102 @@ if True:
         # Notepad++ editor is Scintilla; focus there if OS focus is stuck elsewhere.
         h = FindWindowExW(wintypes.HWND(root_hwnd), wintypes.HWND(0), "Scintilla", None)
         return int(h or 0)
+
+    def _get_class_name(hwnd: int) -> str:
+        buf = ctypes.create_unicode_buffer(256)
+        if GetClassNameW(wintypes.HWND(hwnd), buf, 256) == 0:
+            return ""
+        return buf.value
+
+    def _get_process_name_for_hwnd(hwnd: int) -> Optional[str]:
+        pid = wintypes.DWORD()
+        GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(pid))
+        if not pid.value:
+            return None
+        hproc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+        if not hproc:
+            return None
+        try:
+            buf_len = wintypes.DWORD(260)
+            buf = ctypes.create_unicode_buffer(buf_len.value)
+            if QueryFullProcessImageNameW(hproc, 0, buf, ctypes.byref(buf_len)):
+                return os.path.basename(buf.value).lower()
+        finally:
+            CloseHandle(hproc)
+        return None
+
+    def _detect_start_menu_window():
+        found = {"hwnd": 0, "class": "", "proc": ""}
+        start_menu_procs = {
+            "startmenuexperiencehost.exe",
+            "searchhost.exe",
+            "shellexperiencehost.exe",
+        }
+        start_menu_classes = {"Windows.UI.Core.CoreWindow"}
+
+        def _cb(hwnd, _lparam):
+            if not IsWindowVisible(wintypes.HWND(hwnd)):
+                return True
+            cls = _get_class_name(int(hwnd))
+            if cls not in start_menu_classes:
+                return True
+            proc = _get_process_name_for_hwnd(int(hwnd))
+            if proc and proc in start_menu_procs:
+                found["hwnd"] = int(hwnd)
+                found["class"] = cls
+                found["proc"] = proc
+                return False
+            return True
+
+        EnumWindows(EnumWindowsProc(_cb), 0)
+        return found
+
+    def _log_activation_failure_context(hwnd: int) -> None:
+        fg = int(GetForegroundWindow() or 0)
+        fg_class = _get_class_name(fg) if fg else ""
+        fg_proc = _get_process_name_for_hwnd(fg) if fg else None
+        start_menu = _detect_start_menu_window()
+        log.info(
+            "activateWindowBetter failed: target=%s fg=%s fgClass=%s fgProc=%s startMenu=%s startMenuClass=%s startMenuProc=%s",
+            hwnd,
+            fg,
+            fg_class,
+            fg_proc,
+            start_menu["hwnd"],
+            start_menu["class"],
+            start_menu["proc"],
+        )
+
+    def maybeCloseStartMenu():
+        start_menu = _detect_start_menu_window()
+        hwnd = start_menu["hwnd"]
+        className = start_menu["class"]
+        appName = start_menu["proc"]
+        if not hwnd:
+            hwnd = int(GetForegroundWindow() or 0)
+            if not hwnd:
+                return
+            className = _get_class_name(hwnd)
+            appName = _get_process_name_for_hwnd(hwnd) or ""
+        START_MENU_CLASS_NAMES = [
+            "Windows.UI.Core.CoreWindow",
+        ]
+        START_MENU_PROCS = {
+            "searchhost.exe",
+            "startmenuexperiencehost.exe",
+            "shellexperiencehost.exe",
+        }
+        if appName in START_MENU_PROCS and className in START_MENU_CLASS_NAMES:
+            WM_CLOSE = 0x0010
+            watchdog.cancellableSendMessage(hwnd, WM_CLOSE, 0, 0)
+            currentTime = time.time()
+            MAX_DELAY = 0.5
+            endTime = currentTime + MAX_DELAY
+            while time.time() < endTime:
+                time.sleep(0.1)
+                if int(GetForegroundWindow() or 0) != hwnd:
+                    return
+            raise Exception(f"Failed to close start menu after timeout. {appName=} {className=}")
 
     def _activate_window_impl(hwnd: int, forceChildFocus: bool = False) -> bool:
         hwnd = int(GetAncestor(wintypes.HWND(hwnd), GA_ROOT)) or hwnd
@@ -1532,9 +1658,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             hwndIndex = 0
         hwnd = hwnds[hwndIndex]['hwnd']
         isMaximized = hwnds[hwndIndex]['isMaximized']
+        maybeCloseStartMenu()
         forceChildFocus = (entry.appName.lower() == "notepad++")
         ok = activateWindowBetter(hwnd)
         if not ok:
+            _log_activation_failure_context(hwnd)
             raise RuntimeError("not ok")
         #winUser.setForegroundWindow(hwnd)
         #winUser.setFocus(hwnd)
